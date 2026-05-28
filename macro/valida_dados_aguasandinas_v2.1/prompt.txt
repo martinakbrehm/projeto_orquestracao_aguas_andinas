@@ -1,0 +1,7 @@
+Finalize a implementação dos logs e do fluxo de reinício seguindo o que já comecei:
+
+Logs no Front: Garanta que cada etapa do processo e, principalmente, os erros (try/except), enviem mensagens claras para a interface.
+
+Novo Processo: Libere o botão de seleção de planilha assim que o processo atual acabar (ou der erro ou o usuário tiver decidido encerrar) . Certifique-se de que, ao iniciar uma nova, os estados e logs antigos sejam resetados.
+
+Fio da Meada: Mantenha o padrão de código atual. Não refatore, apenas complete a lógica de feedback e o ciclo de repetição do usuário.

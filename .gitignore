@@ -1,0 +1,47 @@
+# Credenciais -- NUNCA versionar
+config.py
+.env
+macro/macro/.env
+macro/macro/.env.local
+macro/macro/.env.production
+!macro/macro/.env.example
+api_automation/api_credentials.py
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+macro/macro/.venv/
+macro/macro/__pycache__/
+macro/macro/.pytest_cache/
+
+# Dados do projeto -- NUNCA versionar (arquivos de clientes/operacional)
+dados/
+
+# Macro CPFL -- .env interno com credenciais GMP
+macro/macro_cpfl/valida_pn_gmp-main/.env
+macro/macro_cpfl/valida_pn_gmp-main/chromedriver.exe
+macro/macro_cpfl/valida_pn_gmp-main/chromedriver
+
+# Macro -- todos os arquivos de dados gerados pelo ciclo (lotes, resultados, arquivos)
+macro/dados/*.csv
+macro/dados/*.json
+macro/dados/arquivo/
+macro/dados_cpfl/*.csv
+macro/dados_cpfl/*.json
+macro/dados_cpfl/arquivo/
+
+# Scripts temporarios de validacao
+_validar_macro.py
+temp_check.py
+temp_explain.py
+
+# Logs
+*.log
+import_log*.txt
+
+# OS
+.DS_Store
+Thumbs.db

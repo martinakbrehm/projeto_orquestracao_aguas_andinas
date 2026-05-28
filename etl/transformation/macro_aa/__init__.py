@@ -1,0 +1,1 @@
+from etl.transformation.macro_aa.interpretar_resposta_aa import interpretar
