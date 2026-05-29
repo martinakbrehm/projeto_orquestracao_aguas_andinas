@@ -66,8 +66,11 @@ CREATE TABLE IF NOT EXISTS clientes (
   data_nascimento DATE DEFAULT NULL,
   data_criacao    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   data_update     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  staging_id      INT DEFAULT NULL,            -- FK → staging_imports (importação de origem)
   PRIMARY KEY (id),
-  UNIQUE KEY ux_clientes_rut (rut)
+  UNIQUE KEY ux_clientes_rut (rut),
+  KEY idx_clientes_staging (staging_id),
+  CONSTRAINT fk_clientes_staging FOREIGN KEY (staging_id) REFERENCES staging_imports(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 DELIMITER //

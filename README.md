@@ -1,6 +1,370 @@
-﻿# projeto_orquestracao_cpfl
+﻿# projeto_orquestracao_aguas_andinas
 
-Pipeline de orquestração end-to-end para automação da validação de titularidade de clientes junto ao portal GMP da CPFL. O sistema integra ingestão de dados brutos, processamento ETL, execução de automação Selenium e exposição de métricas em dashboard analítico — tudo sobre um banco MySQL gerenciado na AWS RDS.
+Pipeline de orquestração end-to-end para automação da validação de contatos de clientes Águas Andinas. O sistema integra ingestão de arquivos CSV, processamento ETL, execução de macro de consulta via API, e exposição de métricas em dashboard analítico — tudo sobre um banco MySQL gerenciado na AWS RDS.
+
+---
+
+## Arquitetura
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                          FONTES DE DADOS                             │
+│  dados/bases/   ENTREGA BASE NOMBRE DIRECCION FECH NAC.txt           │
+│                 ENTREGA CELULAR.txt                                   │
+│                 ENTREGA CORREOv.txt                                  │
+└──────────────────────┬───────────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                    CAMADA DE INGESTÃO (ETL Load)                     │
+│  01_importar_clientes_aa.py   — RUT, nome, sexo, data_nascimento     │
+│                                 + staging_imports (controle)         │
+│  02_importar_contatos_aa.py   — telefones + e-mails (enriquecimento) │
+│  03_reimportar_enderecos_aa.py — direccion, comuna, region           │
+└──────────────────────┬───────────────────────────────────────────────┘
+                       │  tabela_macros_aa (status=pendente)
+                       ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                    CAMADA DE ORQUESTRAÇÃO (Macro)                    │
+│  executar_db.py   — consome lotes de pendentes, chama API de         │
+│                     consulta, salva resultado no banco               │
+└──────────────────────┬───────────────────────────────────────────────┘
+                       │  tabela_macros_aa (status=telefone_validado|
+                       │                          telefone_nao_validado)
+                       ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                    CAMADA ANALÍTICA (Dashboard)                      │
+│  Dashboard Dash/Plotly → http://127.0.0.1:8050                       │
+│  Refresh automático: 08h e 17h (thread interno)                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Modelo Relacional
+
+**Banco:** `bd_Automacoes_time_dados_aguas_andinas` (MySQL 8, AWS RDS)
+
+### Diagrama
+
+```
+staging_imports ─────────────────────────────────────────────────────┐
+  id PK | filename | total_rows | rows_success | rows_failed          │
+  status ENUM | created_at | started_at | finished_at                 │
+       │                                                               │
+       │  1:N (staging_id)                                            │
+       ▼                                                               │
+clientes ─────────────────────────────────────────────────────────────┤
+  id PK | rut UNIQUE(8) | dv(1) | nome | sexo | data_nascimento       │
+  staging_id FK → staging_imports                                     │
+  data_criacao | data_update                                           │
+       │                                                               │
+       ├──────────────────────────────────────────────────────────────┤
+       │  1:N                        1:N                   1:1        │
+       ▼                             ▼                     ▼          │
+enderecos             telefones             emails          │          │
+  id PK                id PK                id PK           │          │
+  cliente_id FK        cliente_id FK        cliente_id FK   │          │
+  direccion            numero               endereco        │          │
+  comuna               origem ENUM          origem ENUM     │          │
+  region               staging_id FK ───────────────────────┘          │
+  data_criacao         data_criacao         data_criacao               │
+                                                                        │
+       │                                                               │
+       │  1:1 (UNIQUE)                                                 │
+       ▼                                                               │
+tabela_macros_aa ─────────────────────────────────────────────────────┘
+  id PK | cliente_id FK (UNIQUE)
+  resposta_id FK → respostas
+  telefone_id FK → telefones (origem=validado)
+  email_id FK    → emails    (origem=validado)
+  status ENUM | extraido | data_extracao
+  data_criacao | data_update
+
+respostas
+  id PK | mensagem | status
+
+staging_import_rows
+  id PK | staging_id FK | row_idx
+  raw_rut | raw_nome | normalized_rut | normalized_dv
+  validation_status ENUM | validation_message | processed_at
+```
+
+### Tabelas
+
+#### `staging_imports`
+Controla cada importação de arquivo. Criado ao início da carga; atualizado com totais ao final.
+
+| Coluna | Descrição |
+|--------|-----------|
+| `filename` | Nome do arquivo importado (ex: `BASES ABRIL-2026`) |
+| `rows_success` | Linhas processadas com sucesso |
+| `rows_failed` | Linhas rejeitadas |
+| `status` | `pending` → `processing` → `completed` / `failed` |
+
+#### `clientes`
+Um registro por RUT (identificador fiscal chileno). Inserção com `INSERT IGNORE` — o RUT é a chave de deduplicação.
+
+| Coluna | Descrição |
+|--------|-----------|
+| `rut` | RUT sem DV, sem pontos, sem zeros à esquerda (ex: `12345678`) |
+| `dv` | Dígito verificador: `0-9` ou `K` |
+| `staging_id` | FK para `staging_imports` — identifica de qual importação o cliente veio |
+
+#### `enderecos`
+Endereço chileno do cliente. Um por cliente (`INSERT IGNORE` via `cliente_id`).
+
+#### `telefones`
+Todos os telefones do cliente, por origem. Chave única: `(cliente_id, numero, origem)`.
+
+| `origem` | Descrição |
+|----------|-----------|
+| `enriquecimento` | Inserido na importação da base de contatos (arquivo `ENTREGA CELULAR.txt`) |
+| `validado` | Retornado e confirmado pela macro em tempo de execução |
+
+#### `emails`
+Mesma estrutura de `telefones`. Origem `enriquecimento` vem de `ENTREGA CORREOv.txt`.
+
+#### `tabela_macros_aa`
+Uma linha por cliente (UNIQUE em `cliente_id`). Registra o status atual da validação pela macro.
+
+| Coluna | Descrição |
+|--------|-----------|
+| `resposta_id` | FK → `respostas`; indica o cenário de retorno da API |
+| `telefone_id` | FK → `telefones (origem=validado)` quando a macro retornou telefone |
+| `email_id` | FK → `emails (origem=validado)` quando a macro retornou e-mail |
+| `extraido` | `0` = dado ainda não consumido; `1` = já usado em alguma ação/envio |
+| `data_extracao` | Timestamp de quando o dado foi consumido (gerenciado manualmente) |
+
+**Ciclo de vida do status:**
+
+```
+pendente ──→ processando ──→ telefone_validado      (API retornou telefone)
+                         └──→ telefone_nao_validado  (sem telefone, erro, inválido)
+```
+
+#### `respostas`
+Catálogo dos cenários de retorno da macro:
+
+| id | mensagem | status |
+|----|----------|--------|
+| 1 | Sucesso com telefone e e-mail | `telefone_validado` |
+| 2 | Sucesso sem dados | `telefone_nao_validado` |
+| 3 | Usuário já registrado | `telefone_nao_validado` |
+| 4 | Falha de conexão / API | `telefone_nao_validado` |
+| 5 | Aguardando processamento | `telefone_nao_validado` |
+| 6 | Sucesso apenas com telefone | `telefone_validado` |
+| 7 | Sucesso apenas com e-mail | `telefone_nao_validado` |
+| 8 | Telefone inválido (normalização) | `telefone_nao_validado` |
+
+---
+
+## Dashboard
+
+### Acesso
+
+```
+URL:    http://127.0.0.1:8050
+Usuário: aguasandinas
+Senha:   dashboard2026
+```
+
+### Iniciar
+
+```powershell
+python dashboard_macros/run_dashboard.py
+```
+
+### Seções
+
+| Seção | Descrição |
+|-------|-----------|
+| **Resumo por data de processamento** | Total, com telefone e sem telefone agrupados por dia de execução da macro. Filtrável por mês e dia. |
+| **Distribuição por status** | Contagem total de RUTs em cada status da fila (`pendente`, `processando`, `telefone_validado`, `telefone_nao_validado`). |
+| **Distribuição por resposta** | Quantidade de RUTs por tipo de retorno da macro (cenários 1–8). |
+| **Resultados por arquivo de staging** | Uma linha por importação: RUTs no banco, processados, pendentes, com/sem telefone. |
+
+### Refresh automático
+
+O dashboard atualiza os dados automaticamente **duas vezes por dia**, às **08h e às 17h**, via thread interna agendada (`_refresh_bg` em `dashboard.py`). O processo:
+
+1. Executa `executar_refresh()` — limpa queries órfãs e recarrega dados no banco
+2. Invalida o cache em memória (`loader.invalidar_cache()`)
+3. Pré-aquece o cache com dados frescos para que a próxima requisição seja instantânea
+
+O componente `dcc.Interval` do Dash dispara adicionalmente a cada **12 horas** no cliente, garantindo que uma aba aberta por mais de 12h também receba dados novos.
+
+Para forçar um refresh manual sem reiniciar o servidor:
+
+```powershell
+python -m dashboard_macros.refresh_scheduler --once
+```
+
+---
+
+## Setup
+
+### 1. Credenciais
+
+```powershell
+cp config.example.py config.py
+# Edite config.py com as credenciais do banco MySQL
+```
+
+`config.py` define `db_aguas_andinas()` — conexão ao banco AA (AWS RDS).
+
+> `config.py` está no `.gitignore`. **Nunca versionar.**
+
+### 2. Banco de dados
+
+```powershell
+python db_aguas_andinas/setup_database.py
+```
+
+Idempotente (`CREATE TABLE IF NOT EXISTS`). Aplica schema completo incluindo tabelas, índices, triggers e views.
+
+### 3. Dependências
+
+```powershell
+pip install pymysql pandas dash dash-auth plotly
+```
+
+---
+
+## Execução do Pipeline
+
+### Etapa 1 — Importar clientes (base principal)
+
+```powershell
+python etl/load/aguas_andinas/01_importar_clientes_aa.py
+```
+
+Lê `dados/bases/ENTREGA BASE NOMBRE DIRECCION FECH NAC.txt`, cria registro em `staging_imports`, insere clientes com `INSERT IGNORE` (deduplicação por RUT) e vincula cada cliente ao `staging_id` da importação.
+
+### Etapa 2 — Importar contatos (telefones + e-mails)
+
+```powershell
+python etl/load/aguas_andinas/02_importar_contatos_aa.py
+```
+
+Lê `ENTREGA CELULAR.txt` e `ENTREGA CORREOv.txt`. Aplica normalização de telefones antes de inserir.
+
+**Normalização de telefones:**
+
+| Dígitos | Ação |
+|---------|------|
+| 8 | Adiciona `9` na frente (`12345678` → `912345678`) |
+| 9 | Mantém como está |
+| outros | Descartado → `resposta_id=8`, status `telefone_nao_validado` |
+
+### Etapa 3 — Reimportar endereços
+
+```powershell
+python etl/load/aguas_andinas/03_reimportar_enderecos_aa.py
+```
+
+Aplica limpeza completa em `comuna` e `region` (5 etapas): expansão de nomes truncados, remoção de nomes de região no campo de comuna, correção de truncamentos, normalização de espaços e pontuação.
+
+### Etapa 4 — Rodar a macro
+
+```powershell
+# Processa lotes de 500 até zerar todos os pendentes
+python macro/valida_dados_aguasandinas_v2.1/executar_db.py
+
+# Opções
+python executar_db.py --lotes 3          # máximo 3 lotes
+python executar_db.py --tamanho 100      # lotes de 100 registros
+python executar_db.py --pausa 2          # pausa entre requisições (default: 1s)
+python executar_db.py --dry-run          # consulta API sem salvar no banco
+```
+
+A macro lê `pendente` de `tabela_macros_aa`, chama a API, interpreta o retorno e grava `resposta_id`, `status`, `telefone_id`, `email_id` de volta no banco.
+
+---
+
+## Controle de Extração
+
+Os campos `extraido` e `data_extracao` em `tabela_macros_aa` são gerenciados **manualmente** após o consumo dos dados validados. A macro e o ETL **nunca** os alteram.
+
+```sql
+-- Buscar dados ainda não consumidos
+SELECT c.rut, c.nome, t.numero AS telefone, e.endereco AS email
+FROM tabela_macros_aa tm
+JOIN clientes c ON c.id = tm.cliente_id
+LEFT JOIN telefones t ON t.id = tm.telefone_id
+LEFT JOIN emails    e ON e.id = tm.email_id
+WHERE tm.extraido = 0
+  AND tm.status = 'telefone_validado';
+
+-- Marcar como consumido após uso
+UPDATE tabela_macros_aa
+SET extraido = 1, data_extracao = NOW()
+WHERE id IN (...);
+```
+
+---
+
+## Estrutura do Projeto
+
+```
+projeto_orquestracao_aguas_andinas/
+│
+├── config.py                        # Credenciais — NÃO versionado (.gitignore)
+├── config.example.py                # Template público
+│
+├── db_aguas_andinas/
+│   ├── schema.sql                   # DDL completo: tabelas, índices, triggers, views
+│   └── setup_database.py            # Aplica schema via pymysql (idempotente)
+│
+├── dados/
+│   ├── bases/                       # Arquivos de entrada — NÃO versionados
+│   └── resultados/                  # CSVs de resultado da macro
+│
+├── etl/
+│   ├── load/aguas_andinas/
+│   │   ├── 01_importar_clientes_aa.py   # Ingestão RUT + staging_id
+│   │   ├── 02_importar_contatos_aa.py   # Telefones + e-mails
+│   │   └── 03_reimportar_enderecos_aa.py # Endereços com limpeza
+│   └── transformation/macro_aa/
+│       └── interpretar_resposta_aa.py   # Regras: retorno API → (resposta_id, status)
+│
+├── macro/
+│   └── valida_dados_aguasandinas_v2.1/
+│       ├── executar_db.py           # Runner integrado ao banco (CLI)
+│       ├── main.py                  # GUI tkinter (uso manual)
+│       └── core/                    # Extrator, Validador
+│
+└── dashboard_macros/
+    ├── run_dashboard.py             # Entry point: inicia servidor na porta 8050
+    ├── dashboard.py                 # App Dash: layout, callbacks, refresh automático
+    ├── data/loader.py               # SQL + cache em memória (TTL: refresh 2x/dia)
+    └── service/orchestrator.py      # Filtros e agregações para o resumo diário
+```
+
+---
+
+## Decisões de Engenharia
+
+| Decisão | Justificativa |
+|---------|---------------|
+| `INSERT IGNORE` em `clientes` com dedup por RUT | Permite reimportar o mesmo arquivo sem duplicatas |
+| `staging_id` em `clientes` | Rastreia de qual importação cada cliente veio; permite queries corretas por staging |
+| 1 registro por cliente em `tabela_macros_aa` (UNIQUE em `cliente_id`) | Simplifica leitura e evita estados contraditórios; a macro sempre sobrescreve o resultado mais recente |
+| `extraido` / `data_extracao` fora do ciclo da macro | Desacopla o controle de consumo do processamento; permite reuso seguro dos dados |
+| Cache em memória no dashboard | Isola a leitura analítica da carga transacional; latência de resposta <1ms após aquecimento |
+| Refresh às 08h e 17h via thread interna | Dados sempre atualizados nos principais turnos sem depender de agendador externo (Task Scheduler / cron) |
+| Normalização de telefones centralizada | Regra única aplicada tanto na importação quanto na macro; evita divergências |
+
+---
+
+## Git
+
+```powershell
+git add -A
+git commit -m "tipo: descrição"
+git push origin main
+```
+
 
 ---
 

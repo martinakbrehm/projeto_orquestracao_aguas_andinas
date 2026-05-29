@@ -118,7 +118,7 @@ def buscar_ids_existentes(cursor, ruts: list[str]) -> dict[str, int]:
     return {row[0]: row[1] for row in cursor.fetchall()}
 
 
-def inserir_lote(cursor, clientes: list[dict], enderecos: list[dict], dry_run: bool) -> tuple[int, int]:
+def inserir_lote(cursor, clientes: list[dict], enderecos: list[dict], dry_run: bool, staging_id: int | None = None) -> tuple[int, int]:
     """
     Insere um lote de clientes e endereços.
     Retorna (inseridos_clientes, inseridos_enderecos).
@@ -128,11 +128,11 @@ def inserir_lote(cursor, clientes: list[dict], enderecos: list[dict], dry_run: b
 
     # ── Clientes ──────────────────────────────────────────────────────────
     sql_cliente = """
-        INSERT IGNORE INTO clientes (rut, dv, nome, sexo, data_nascimento)
-        VALUES (%s, %s, %s, %s, %s)
+        INSERT IGNORE INTO clientes (rut, dv, nome, sexo, data_nascimento, staging_id)
+        VALUES (%s, %s, %s, %s, %s, %s)
     """
     vals_cliente = [
-        (c["rut"], c["dv"], c["nome"], c["sexo"], c["data_nascimento"])
+        (c["rut"], c["dv"], c["nome"], c["sexo"], c["data_nascimento"], staging_id)
         for c in clientes
     ]
     cursor.executemany(sql_cliente, vals_cliente)
@@ -252,7 +252,7 @@ def main():
                 if len(batch_cli) >= BATCH_SIZE:
                     try:
                         with conn.cursor() as cur:
-                            c, e = inserir_lote(cur, batch_cli, batch_end, args.dry_run)
+                            c, e = inserir_lote(cur, batch_cli, batch_end, args.dry_run, staging_id)
                         conn.commit()
                         cli_ins += c
                         end_ins += e
@@ -278,7 +278,7 @@ def main():
             if batch_cli:
                 try:
                     with conn.cursor() as cur:
-                        c, e = inserir_lote(cur, batch_cli, batch_end, args.dry_run)
+                        c, e = inserir_lote(cur, batch_cli, batch_end, args.dry_run, staging_id)
                     conn.commit()
                     cli_ins += c
                     end_ins += e

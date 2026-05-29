@@ -18,7 +18,7 @@ except ImportError:
     from service import orchestrator
     from refresh_scheduler import executar_refresh
 
-REFRESH_INTERVAL_MS = 1 * 60 * 60 * 1000  # 1 hora em milissegundos
+REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000  # 12 horas em milissegundos
 
 COLUMN_LABELS = {
     "dia":        "Data",
@@ -32,10 +32,10 @@ COLUMN_LABELS = {
 COLUMN_LABELS_AA = {
     "dia":          "Data",
     "total":        "Total",
-    "ativos":       "Com Telefone",
-    "pct_ativos":   "% Com Telefone",
-    "inativos":     "Sem Telefone",
-    "pct_inativos": "% Sem Telefone",
+    "ativos":       "Com telefone",
+    "pct_ativos":   "% Com telefone",
+    "inativos":     "Sem telefone",
+    "pct_inativos": "% Sem telefone",
 }
 
 external_stylesheets = [
@@ -43,12 +43,12 @@ external_stylesheets = [
     "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css",
 ]
 app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
-app.title = "Dashboard de Macros - Aguas Andinas & CPFL"
+app.title = "Dashboard Aguas Andinas"
 
 # Autenticação básica para todo o app
 auth = dash_auth.BasicAuth(
     app,
-    {'cpfl': 'dashboard2026'}
+    {'aguasandinas': 'dashboard2026'}
 )
 
 TITLE_STYLE         = {"fontFamily": "Roboto", "color": "#1a237e", "fontWeight": "700", "fontSize": "22px"}
@@ -62,7 +62,7 @@ _opcoes_arquivo_inicial = []
 
 # Refresh inicial das tabelas materializadas (em background para não bloquear startup)
 # Horários agendados para refresh automático (hora cheia)
-_REFRESH_HORARIOS = {8, 12, 17}
+_REFRESH_HORARIOS = {8, 17}  # refresh automático: 08h e 17h
 
 
 def _executar_refresh_once():
@@ -76,8 +76,7 @@ def _executar_refresh_once():
         print("[INFO] Cache invalidado após refresh")
     # Pré-aquece o cache com dados frescos do banco (independente de browser aberto)
     try:
-        loader.carregar_dados("macro")
-        loader.carregar_stats_por_arquivo()
+        loader.carregar_dados("aguas_andinas")
         print("[INFO] Cache pré-aquecido com dados atualizados")
     except Exception as e:
         print(f"[WARN] Falha ao pré-aquecer cache: {e}")
@@ -118,7 +117,7 @@ app.layout = html.Div([
     html.Div([
         html.Img(src="https://img.icons8.com/color/48/000000/combo-chart--v2.png",
                  style={"height": "48px", "marginRight": "16px"}),
-        html.H1("Dashboard de Macros",
+        html.H1("Dashboard de Macros - Aguas Andinas",
                 style={**TITLE_STYLE, "display": "inline-block", "verticalAlign": "middle", "margin": 0}),
     ], style={"display": "flex", "alignItems": "center", "marginBottom": "16px", "marginTop": "16px"}),
 
@@ -126,172 +125,7 @@ app.layout = html.Div([
     dcc.Interval(id="interval-refresh", interval=REFRESH_INTERVAL_MS, n_intervals=0),
 
     # Abas
-    dcc.Tabs(id="abas-principais", value="cpfl", children=[
-
-        # ================================================================
-        # ABA CPFL
-        # ================================================================
-        dcc.Tab(label="CPFL", value="cpfl", children=[
-
-            # Tipo fixo = macro (hidden store para compatibilidade)
-            dcc.Store(id="selector-tipo-macro", data="macro"),
-            # Fornecedor fixo (hidden — sem seleção)
-            dcc.Store(id="selector-fornecedor", data="todos"),
-
-            # Info bar
-            html.Div(id="info-registros",
-                     style={"marginBottom": "12px", "fontSize": "14px", "fontWeight": "600",
-                            "marginTop": "12px"}),
-
-            # Filtros
-            html.Div([
-                html.Div([
-                    html.Label("Filtrar mês", style={"fontWeight": "700", "fontSize": "13px",
-                                                      "marginBottom": "6px", "display": "block",
-                                                      "color": "#1a237e"}),
-                    dcc.Dropdown(
-                        id="filtro-mes-dropdown",
-                        options=[],
-                        multi=True, clearable=True, placeholder="Todos os meses",
-                        style={"width": "100%"},
-                    ),
-                ], style={"flex": "0.7", "minWidth": "180px", "background": "#fff", "padding": "10px",
-                          "borderRadius": "8px", "boxShadow": "0 1px 6px rgba(44,62,80,0.06)"}),
-
-                html.Div([
-                    html.Label("Filtrar dia", style={"fontWeight": "700", "fontSize": "13px",
-                                                      "marginBottom": "6px", "display": "block",
-                                                      "color": "#1a237e"}),
-                    dcc.Dropdown(
-                        id="resumo-dia-dropdown",
-                        options=[],
-                        multi=True, clearable=True, placeholder="Todos os dias",
-                        style={"width": "100%"},
-                    ),
-                ], style={"flex": "0.7", "minWidth": "180px", "background": "#fff", "padding": "10px",
-                          "borderRadius": "8px", "boxShadow": "0 1px 6px rgba(44,62,80,0.06)"}),
-
-                dcc.Store(id="filtro-empresa-dropdown", data=None),
-                dcc.Store(id="filtro-arquivo-dropdown", data=None),
-
-            ], style={"display": "flex", "gap": "12px", "alignItems": "stretch",
-                      "marginBottom": "12px", "marginTop": "8px"}),
-
-            # Conteudo principal CPFL
-            dcc.Loading(type="circle", children=html.Div([
-
-                # Card: Resumo diario
-                html.Div([
-                    html.H2("Resumo por data de processamento",
-                            style={**SECTION_TITLE_STYLE, "marginBottom": "6px"}),
-                    html.P(
-                        "Total = consultas executadas no dia. "
-                        "Ativo = PN encontrado no portal GMP. "
-                        "Inativo = CPF/UC sem PN ou titular divergente.",
-                        style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
-                               "background": "#e8f5e9", "padding": "8px 14px", "borderRadius": "6px",
-                               "borderLeft": "4px solid #2e7d32"},
-                    ),
-                    dash_table.DataTable(
-                        id="tabela-resumo",
-                        columns=[{"name": COLUMN_LABELS.get(c, c), "id": c}
-                                  for c in ["dia", "total", "ativos", "pct_ativos", "inativos", "pct_inativos"]],
-                        data=[],
-                        style_table={"overflowX": "auto"},
-                        style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "15px",
-                                    "padding": "10px", "whiteSpace": "normal", "height": "auto"},
-                        style_header={"backgroundColor": "#3949ab", "color": "white",
-                                       "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
-                        style_data_conditional=[
-                            {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4ff"},
-                            {"if": {"filter_query": '{dia} = "Total"'}, "fontWeight": "bold",
-                             "backgroundColor": "#e8eaf6"},
-                        ],
-                        page_size=20,
-                    ),
-                ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
-                          "padding": "16px", "marginBottom": "18px"}),
-
-                # Card: Distribuicao de respostas
-                html.Div([
-                    html.Div([
-                        html.H3("Distribuicao de respostas",
-                                style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
-                        html.P(
-                            "Retorno do portal GMP da CPFL para cada consulta CPF+UC. "
-                            "Quantidade = total de combos com aquela resposta.",
-                            style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
-                                   "background": "#fff3e0", "padding": "8px 14px", "borderRadius": "6px",
-                                   "borderLeft": "4px solid #e65100"},
-                        ),
-                        dash_table.DataTable(
-                            id="tabela-mensagens",
-                            columns=[{"name": "Resposta", "id": "mensagem"},
-                                      {"name": "Quantidade", "id": "quantidade"}],
-                            data=[],
-                            style_table={"overflowX": "auto", "borderRadius": "8px",
-                                         "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "12px"},
-                            style_cell={"textAlign": "left", "fontFamily": "Roboto", "fontSize": "14px",
-                                        "padding": "8px", "whiteSpace": "normal", "height": "auto"},
-                            style_header={"backgroundColor": "#3949ab", "color": "white",
-                                           "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
-                            style_data_conditional=[
-                                {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4ff"},
-                            ],
-                            page_size=12,
-                        ),
-                    ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
-                              "padding": "12px", "marginBottom": "22px"}),
-                ], style={"width": "100%"}),
-
-                # Card: Resultados por arquivo carregado
-                html.Div([
-                    html.H3("Resultados por arquivo carregado",
-                            style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
-                    html.P(
-                        "Cada par CPF+UC = 1 combo. "
-                        "Ineditas = combos novas inseridas a partir deste arquivo. "
-                        "Processadas = combos que ja passaram pela macro. "
-                        "Pendentes = combos aguardando execucao.",
-                        style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
-                               "background": "#e3f2fd", "padding": "8px 14px", "borderRadius": "6px",
-                               "borderLeft": "4px solid #1565c0"},
-                    ),
-                    dash_table.DataTable(
-                        id="tabela-arquivos-geral",
-                        columns=[],
-                        data=[],
-                        style_table={"overflowX": "auto", "borderRadius": "8px",
-                                     "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
-                        style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "13px",
-                                    "padding": "7px 5px", "whiteSpace": "normal", "height": "auto",
-                                    "minWidth": "55px", "maxWidth": "120px"},
-                        style_cell_conditional=[
-                            {"if": {"column_id": "arquivo"}, "textAlign": "left", "minWidth": "160px", "maxWidth": "220px"},
-                            {"if": {"column_id": "data_carga"}, "minWidth": "80px", "maxWidth": "90px"},
-                            {"if": {"column_id": "pct_combos_ativas"}, "minWidth": "50px", "maxWidth": "65px"},
-                            {"if": {"column_id": "pct_combos_inativas"}, "minWidth": "50px", "maxWidth": "65px"},
-                        ],
-                        style_header={"backgroundColor": "#3949ab", "color": "white",
-                                       "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "11px",
-                                       "padding": "8px 5px", "whiteSpace": "normal"},
-                        style_data_conditional=[
-                            {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4ff"},
-                        ],
-                        page_size=10,
-                    ),
-                ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
-                          "padding": "16px", "marginBottom": "18px"}),
-
-            ], style={"background": "#e8eaf6", "padding": "28px", "borderRadius": "10px",
-                      "marginBottom": "18px"})),
-
-        ]),  # fim Tab CPFL
-
-        # ================================================================
-        # ABA AGUAS ANDINAS
-        # ================================================================
-        dcc.Tab(label="Aguas Andinas", value="aguas_andinas", children=[
+    html.Div([
 
             # Info bar
             html.Div(id="info-registros-aa",
@@ -384,6 +218,10 @@ app.layout = html.Div([
                                      "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "12px"},
                         style_cell={"textAlign": "left", "fontFamily": "Roboto", "fontSize": "14px",
                                     "padding": "8px", "whiteSpace": "normal", "height": "auto"},
+                        style_cell_conditional=[
+                            {"if": {"column_id": "mensagem"},  "width": "70%"},
+                            {"if": {"column_id": "quantidade"}, "width": "30%", "textAlign": "right"},
+                        ],
                         style_header={"backgroundColor": "#1565c0", "color": "white",
                                        "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
                         style_data_conditional=[
@@ -394,136 +232,94 @@ app.layout = html.Div([
                 ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
                           "padding": "12px", "marginBottom": "22px"}),
 
+                # Card: Distribuicao por resposta AA
+                html.Div([
+                    html.H3("Distribuição por resposta",
+                            style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
+                    html.P(
+                        "Quantidade de RUTs por tipo de retorno da macro, no período selecionado.",
+                        style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
+                               "background": "#e3f2fd", "padding": "8px 14px", "borderRadius": "6px",
+                               "borderLeft": "4px solid #1565c0"},
+                    ),
+                    dash_table.DataTable(
+                        id="tabela-respostas-aa",
+                        columns=[
+                            {"name": "Resposta",    "id": "mensagem"},
+                            {"name": "Quantidade",  "id": "quantidade"},
+                        ],
+                        data=[],
+                        style_table={"overflowX": "auto", "borderRadius": "8px",
+                                     "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "12px"},
+                        style_cell={"textAlign": "left", "fontFamily": "Roboto", "fontSize": "14px",
+                                    "padding": "8px", "whiteSpace": "normal", "height": "auto"},
+                        style_cell_conditional=[
+                            {"if": {"column_id": "mensagem"},  "width": "70%"},
+                            {"if": {"column_id": "quantidade"}, "width": "30%", "textAlign": "right"},
+                        ],
+                        style_header={"backgroundColor": "#1565c0", "color": "white",
+                                       "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
+                        style_data_conditional=[
+                            {"if": {"row_index": "odd"}, "backgroundColor": "#e3f2fd"},
+                        ],
+                        page_size=12,
+                    ),
+                ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
+                          "padding": "12px", "marginBottom": "22px"}),
+
+                # Card: Resultados por arquivo de staging AA
+                html.Div([
+                    html.H3("Resultados por arquivo de staging",
+                            style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
+                    html.P(
+                        "Cada linha = um arquivo importado. "
+                        "Clientes únicos = RUTs distintos naquele staging. "
+                        "Processados = já passaram pela macro.",
+                        style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
+                               "background": "#e8f5e9", "padding": "8px 14px", "borderRadius": "6px",
+                               "borderLeft": "4px solid #2e7d32"},
+                    ),
+                    dash_table.DataTable(
+                        id="tabela-staging-aa",
+                        columns=[
+                            {"name": "Arquivo",            "id": "arquivo"},
+                            {"name": "Data carga",          "id": "data_carga"},
+                            {"name": "RUTs no banco",       "id": "clientes_no_banco"},
+                            {"name": "Processados",         "id": "processados"},
+                            {"name": "Pendentes",           "id": "pendentes"},
+                            {"name": "Com telefone",        "id": "com_telefone"},
+                            {"name": "Sem telefone",        "id": "sem_telefone"},
+                        ],
+                        data=[],
+                        style_table={"overflowX": "auto", "borderRadius": "8px",
+                                     "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
+                        style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "13px",
+                                    "padding": "7px 5px", "whiteSpace": "normal", "height": "auto",
+                                    "minWidth": "60px"},
+                        style_cell_conditional=[
+                            {"if": {"column_id": "arquivo"},
+                             "textAlign": "left", "minWidth": "180px", "maxWidth": "260px"},
+                        ],
+                        style_header={"backgroundColor": "#1565c0", "color": "white",
+                                       "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "13px",
+                                       "padding": "8px 5px", "whiteSpace": "normal"},
+                        style_data_conditional=[
+                            {"if": {"row_index": "odd"}, "backgroundColor": "#e3f2fd"},
+                        ],
+                        page_size=10,
+                    ),
+                ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
+                          "padding": "16px", "marginBottom": "18px"}),
+
             ], style={"background": "#dde9f8", "padding": "28px", "borderRadius": "10px",
                       "marginBottom": "18px"})),
 
-        ]),  # fim Tab Aguas Andinas
-
-    ]),  # fim Tabs
+    ]),  # fim Conteudo Aguas Andinas
 
     html.Div(style={"height": "8px"}),
 
 ], style={"maxWidth": "1100px", "margin": "0 auto", "fontFamily": "Roboto",
           "background": "#f0f2f8", "padding": "16px 0"})
-
-
-# --------------------------------------------------------------------------
-# Callbacks
-# --------------------------------------------------------------------------
-
-@app.callback(
-    [
-        dash.dependencies.Output("filtro-mes-dropdown",     "options"),
-        dash.dependencies.Output("filtro-mes-dropdown",     "value"),
-        dash.dependencies.Output("resumo-dia-dropdown",     "options"),
-        dash.dependencies.Output("resumo-dia-dropdown",     "value"),
-        dash.dependencies.Output("info-registros",          "children"),
-    ],
-    [
-        dash.dependencies.Input("selector-tipo-macro",  "data"),
-        dash.dependencies.Input("selector-fornecedor",  "data"),
-        dash.dependencies.Input("interval-refresh",     "n_intervals"),
-    ]
-)
-def atualizar_opcoes_filtros(tipo_macro, fornecedor, n_intervals):
-    tipo = "macro"
-    filtro_forn = fornecedor if fornecedor and fornecedor != "todos" else None
-    # Se veio do interval, rodar refresh em background (cache será invalidado ao final do refresh)
-    ctx = dash.callback_context
-    if ctx.triggered and ctx.triggered[0]["prop_id"] == "interval-refresh.n_intervals" and n_intervals > 0:
-        threading.Thread(target=_executar_refresh_once, daemon=True).start()
-    df = loader.carregar_dados(tipo)
-    if df.empty:
-        loader.invalidar_cache(tipo)
-        df = loader.carregar_dados(tipo)
-    if df.empty:
-        return [], None, [], None, f"Sem dados para {tipo.upper()} (aguardando refresh...)"
-    dff = df[df["fornecedor"] == filtro_forn] if filtro_forn and "fornecedor" in df.columns else df
-    opcoes_dia = sorted(dff["dia"].dropna().unique())
-
-    # Gerar opções de mês-ano a partir dos dias disponíveis
-    meses_vistos = {}
-    for d in opcoes_dia:
-        ds = str(d)
-        if len(ds) >= 7:
-            chave_mes = ds[:7]  # "2026-04"
-            if chave_mes not in meses_vistos:
-                try:
-                    mes_num = int(chave_mes[5:7])
-                    ano = chave_mes[:4]
-                    meses_vistos[chave_mes] = f"{mes_num:02d}/{ano}"
-                except ValueError:
-                    pass
-    opcoes_dropdown_mes = [{"label": meses_vistos[k], "value": k} for k in sorted(meses_vistos.keys())]
-
-    info = f"Registros: {len(dff):,}  |  Dias: {len(opcoes_dia)}"
-    return (
-        opcoes_dropdown_mes,
-        None,
-        [{"label": str(d), "value": str(d)} for d in opcoes_dia],
-        None,
-        info,
-    )
-
-
-@app.callback(
-    [
-        dash.dependencies.Output("tabela-resumo",             "data"),
-        dash.dependencies.Output("tabela-mensagens",          "data"),
-        dash.dependencies.Output("tabela-arquivos-geral",     "data"),
-        dash.dependencies.Output("tabela-arquivos-geral",     "columns"),
-    ],
-    [
-        dash.dependencies.Input("filtro-mes-dropdown",        "value"),
-        dash.dependencies.Input("resumo-dia-dropdown",        "value"),
-        dash.dependencies.Input("selector-tipo-macro",        "data"),
-        dash.dependencies.Input("selector-fornecedor",        "data"),
-    ]
-)
-def atualizar_dashboard(filtro_mes, resumo_sel, tipo_macro, fornecedor):
-    filtro_empresa = None
-    filtro_arquivo = None
-    tipo = "macro"
-    filtro_forn = fornecedor if fornecedor and fornecedor != "todos" else None
-    # Combinar filtros de m\u00eas e dia numa lista \u00fanica para o orchestrator
-    filtro_datas_combinado = []
-    if filtro_mes:
-        for m in (filtro_mes if isinstance(filtro_mes, list) else [filtro_mes]):
-            filtro_datas_combinado.append(f"mes:{m}")
-    if resumo_sel:
-        for d in (resumo_sel if isinstance(resumo_sel, list) else [resumo_sel]):
-            filtro_datas_combinado.append(str(d))
-    try:
-        data_resumo, data_mensagens, data_arquivos = orchestrator.build_dashboard_data(
-            filtro_datas_combinado if filtro_datas_combinado else None,
-            filtro_empresa, tipo_macro=tipo,
-            filtro_fornecedor=filtro_forn, filtro_arquivo=filtro_arquivo,
-            granularidade="combo",
-        )
-    except Exception as _e:
-        import traceback
-        print(f"[ERRO atualizar_dashboard] {_e}")
-        traceback.print_exc()
-        data_resumo = []
-        data_mensagens = []
-        data_arquivos = []
-
-    # Colunas da visão geral por arquivo (CPF+UC combo)
-    cols_geral = [
-        {"name": "Arquivo",              "id": "arquivo"},
-        {"name": "Data carga",           "id": "data_carga"},
-        {"name": "CPFs no arquivo",      "id": "cpfs_no_arquivo"},
-        {"name": "Combos inéditas",      "id": "ucs_ineditas"},
-        {"name": "Processadas",          "id": "combos_processadas"},
-        {"name": "Pendentes",            "id": "combos_pendentes"},
-        {"name": "Ativas",               "id": "combos_ativas"},
-        {"name": "% Ativas",             "id": "pct_combos_ativas"},
-        {"name": "Inativas",             "id": "combos_inativas"},
-        {"name": "% Inativas",           "id": "pct_combos_inativas"},
-    ]
-
-    return (data_resumo, data_mensagens,
-            data_arquivos, cols_geral)
 
 
 # --------------------------------------------------------------------------
@@ -543,6 +339,9 @@ def atualizar_dashboard(filtro_mes, resumo_sel, tipo_macro, fornecedor):
     ]
 )
 def atualizar_opcoes_filtros_aa(n_intervals):
+    ctx = dash.callback_context
+    if ctx.triggered and ctx.triggered[0]["prop_id"] == "interval-refresh.n_intervals" and n_intervals > 0:
+        threading.Thread(target=_executar_refresh_once, daemon=True).start()
     df = loader.carregar_dados("aguas_andinas")
     if df.empty:
         loader.invalidar_cache("aguas_andinas")
@@ -579,8 +378,10 @@ def atualizar_opcoes_filtros_aa(n_intervals):
 
 @app.callback(
     [
-        dash.dependencies.Output("tabela-resumo-aa", "data"),
-        dash.dependencies.Output("tabela-status-aa", "data"),
+        dash.dependencies.Output("tabela-resumo-aa",    "data"),
+        dash.dependencies.Output("tabela-status-aa",    "data"),
+        dash.dependencies.Output("tabela-respostas-aa", "data"),
+        dash.dependencies.Output("tabela-staging-aa",   "data"),
     ],
     [
         dash.dependencies.Input("filtro-mes-dropdown-aa", "value"),
@@ -609,7 +410,48 @@ def atualizar_dashboard_aa(filtro_mes, resumo_sel):
         data_resumo = []
         data_status = []
 
-    return data_resumo, data_status
+    # Distribuicao por resposta (mensagem da macro), filtrada por data
+    data_respostas = []
+    try:
+        df_raw = loader.carregar_dados("aguas_andinas")
+        if not df_raw.empty and "mensagem" in df_raw.columns:
+            dff = df_raw.copy()
+            if filtro_mes or resumo_sel:
+                dias_exp = []
+                if filtro_mes:
+                    for m in (filtro_mes if isinstance(filtro_mes, list) else [filtro_mes]):
+                        dias_exp.extend(
+                            str(d) for d in dff["dia"].dropna().unique()
+                            if str(d).startswith(m)
+                        )
+                if resumo_sel:
+                    for d in (resumo_sel if isinstance(resumo_sel, list) else [resumo_sel]):
+                        dias_exp.append(str(d))
+                if dias_exp:
+                    dff = dff[dff["dia"].astype(str).isin(dias_exp)]
+            data_respostas = (
+                dff[dff["mensagem"].notna()]
+                .groupby("mensagem")["qtd"].sum()
+                .reset_index()
+                .rename(columns={"qtd": "quantidade"})
+                .sort_values("quantidade", ascending=False)
+                .to_dict("records")
+            )
+    except Exception as _e:
+        print(f"[WARN respostas] {_e}")
+
+    _STATUS_LABELS = {
+        "pendente":              "Pendente",
+        "processando":           "Processando",
+        "telefone_validado":     "Telefone validado",
+        "telefone_nao_validado": "Telefone não validado",
+    }
+    data_status = [
+        {**row, "mensagem": _STATUS_LABELS.get(row.get("mensagem", ""), row.get("mensagem", ""))}
+        for row in data_status
+    ]
+
+    return data_resumo, data_status, data_respostas, loader.carregar_staging_aa().to_dict("records")
 
 
 
@@ -620,14 +462,13 @@ def debug_data():
     try:
         print("DEBUG: Chamando build_dashboard_data")
         import traceback
-        data_resumo, data_mensagens, data_arquivos = orchestrator.build_dashboard_data(
-            [], None, "macro", None, None
+        data_resumo, data_status, _ = orchestrator.build_dashboard_data(
+            [], None, "aguas_andinas", None, None
         )
         print(f"DEBUG: Retornou {len(data_resumo)} registros no resumo")
         return jsonify({
-            "data_resumo":    data_resumo,
-            "data_mensagens": data_mensagens,
-            "data_arquivos":  data_arquivos,
+            "data_resumo":  data_resumo,
+            "data_status":  data_status,
         })
     except Exception as e:
         print(f"DEBUG: Erro: {e}")

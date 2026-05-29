@@ -62,6 +62,23 @@ SQL_AA_STATUS_DIST = """
     ORDER BY qtd DESC
 """
 
+SQL_AA_STAGING = """
+    SELECT
+        si.filename                                                    AS arquivo,
+        DATE(si.created_at)                                            AS data_carga,
+        COUNT(DISTINCT c.id)                                           AS clientes_no_banco,
+        SUM(IF(tm.status NOT IN ('pendente','processando'), 1, 0))     AS processados,
+        SUM(IF(tm.status = 'pendente', 1, 0))                          AS pendentes,
+        SUM(IF(tm.status = 'telefone_validado', 1, 0))                 AS com_telefone,
+        SUM(IF(tm.status = 'telefone_nao_validado', 1, 0))             AS sem_telefone
+    FROM staging_imports si
+    JOIN clientes c ON c.staging_id = si.id
+    JOIN tabela_macros_aa tm ON tm.cliente_id = c.id
+    WHERE si.status = 'completed'
+    GROUP BY si.id, si.filename, si.created_at, si.rows_success
+    ORDER BY si.created_at DESC
+"""
+
 
 
 def carregar_dados(tipo: str = "macro") -> pd.DataFrame:
@@ -141,6 +158,31 @@ def carregar_status_aa() -> pd.DataFrame:
         return df.copy()
     except Exception as e:
         print(f"[ERRO] Falha ao carregar status AA: {e}")
+        return pd.DataFrame()
+
+
+def carregar_staging_aa() -> pd.DataFrame:
+    """Carrega estatísticas por arquivo de staging para Águas Andinas."""
+    cache_key = "aa_staging"
+    if cache_key in _CACHE:
+        return _CACHE[cache_key].copy()
+    try:
+        conn = pymysql.connect(**DB_CONFIG_AA)
+        with conn.cursor() as cur:
+            cur.execute(SQL_AA_STAGING)
+            cols = [d[0] for d in cur.description]
+            rows = cur.fetchall()
+        conn.close()
+        df = pd.DataFrame(rows, columns=cols)
+        for col in ["clientes_no_banco", "com_telefone",
+                    "sem_telefone", "pendentes", "processados"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+        if not df.empty:
+            _CACHE[cache_key] = df
+        return df.copy()
+    except Exception as e:
+        print(f"[ERRO] Falha ao carregar staging AA: {e}")
         return pd.DataFrame()
 
 
