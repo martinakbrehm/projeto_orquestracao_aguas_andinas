@@ -18,6 +18,7 @@ Execução a partir da raiz do projeto:
 import argparse
 import sys
 import time
+import re
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -97,6 +98,16 @@ def _bulk_insert(cur, base_sql: str, rows: list[tuple]) -> int:
     return cur.rowcount
 
 
+def normalize_phone(s: str) -> str | None:
+    """Normaliza telefone: 8 dígitos -> adiciona '9'; 9 dígitos -> mantém; outros -> None."""
+    ds = re.sub(r"\D", "", str(s or ""))
+    if len(ds) == 8:
+        return "9" + ds
+    if len(ds) == 9:
+        return ds
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Core
 # ---------------------------------------------------------------------------
@@ -151,9 +162,11 @@ def processar_lote(
 
         print(f"  [{i:>3}/{total}] RUT {rut} -> {novo_status} tel={telefone!r} email={email!r}")
 
+        normalized_tel = normalize_phone(telefone) if telefone else None
+
         if not dry_run:
-            if telefone:
-                tel_batch.append((cliente_id, telefone, "validado"))
+            if normalized_tel:
+                tel_batch.append((cliente_id, normalized_tel, "validado"))
             if email:
                 email_batch.append((cliente_id, email, "validado"))
             macro_batch.append((resposta_id, novo_status, macro_id))
@@ -165,17 +178,33 @@ def processar_lote(
         print(f"  dry-run: {total} consultados, nenhum salvo.")
         return total, erros_fatais
 
-    with conn.cursor() as cur:
-        _bulk_insert(cur, SQL_BULK_TEL,   tel_batch)
-        _bulk_insert(cur, SQL_BULK_EMAIL, email_batch)
-        for resposta_id, novo_status, macro_id in macro_batch:
-            cur.execute(SQL_UPDATE_MACRO, (resposta_id, novo_status, macro_id))
-    conn.commit()
+    try:
+        with conn.cursor() as cur:
+            _bulk_insert(cur, SQL_BULK_TEL,   tel_batch)
+            _bulk_insert(cur, SQL_BULK_EMAIL, email_batch)
+            for resposta_id, novo_status, macro_id in macro_batch:
+                cur.execute(SQL_UPDATE_MACRO, (resposta_id, novo_status, macro_id))
+        conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        # Reverte lote para pendente para ser retentado
+        ph = _ids_placeholders(ids)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(SQL_REVERTER_PENDENTE.format(placeholders=ph), ids)
+            conn.commit()
+            print(f"  [{len(ids)} registros revertidos para pendente]")
+        except Exception:
+            pass
+        raise RuntimeError(f"Erro ao salvar lote no banco: {e}") from e
 
     ok = total - erros_fatais
     print(f"  Salvo: {ok} ok | {erros_fatais} erros fatais | tel={len(tel_batch)} email={len(email_batch)}")
 
-    # Se todos falharam por conexão → sinaliza para o loop principal parar
+    # Se todos falharam por conexão → sinaliza para o loop principal reconectar
     if erros_fatais == total:
         raise RuntimeError("Todos os registros do lote falharam. API pode estar indisponível.")
 
@@ -204,21 +233,58 @@ def main() -> None:
     extrator = Extrator()
     conn     = conectar()
 
-    total_processados = 0
-    total_erros       = 0
-    lote_num          = 0
+    total_processados    = 0
+    total_erros          = 0
+    lote_num             = 0
+    erros_consecutivos   = 0
+    MAX_ERROS_CONSECUTIVOS = 5
+    PAUSA_RECONEXAO      = 30  # segundos entre tentativas de reconexão
 
     try:
         while True:
             lote_num += 1
             print(f"\nLote #{lote_num}")
 
-            processados, erros = processar_lote(
-                conn, extrator,
-                tamanho=args.tamanho,
-                pausa=args.pausa,
-                dry_run=args.dry_run,
-            )
+            try:
+                processados, erros = processar_lote(
+                    conn, extrator,
+                    tamanho=args.tamanho,
+                    pausa=args.pausa,
+                    dry_run=args.dry_run,
+                )
+                erros_consecutivos = 0
+
+            except (RuntimeError, pymysql.OperationalError, pymysql.err.InterfaceError) as e:
+                erros_consecutivos += 1
+                print(f"\n[AVISO] Lote #{lote_num} falhou ({erros_consecutivos}/{MAX_ERROS_CONSECUTIVOS}): {e}")
+                if erros_consecutivos >= MAX_ERROS_CONSECUTIVOS:
+                    print(f"[INTERROMPIDO] {MAX_ERROS_CONSECUTIVOS} erros consecutivos. Abortando.")
+                    break
+                print(f"  Aguardando {PAUSA_RECONEXAO}s antes de reconectar...")
+                time.sleep(PAUSA_RECONEXAO)
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = conectar()
+                lote_num -= 1  # não contabiliza lote com falha
+                continue
+
+            except Exception as e:
+                erros_consecutivos += 1
+                print(f"\n[AVISO] Erro inesperado no lote #{lote_num} ({erros_consecutivos}/{MAX_ERROS_CONSECUTIVOS}): {type(e).__name__}: {e}")
+                if erros_consecutivos >= MAX_ERROS_CONSECUTIVOS:
+                    print(f"[INTERROMPIDO] {MAX_ERROS_CONSECUTIVOS} erros consecutivos. Abortando.")
+                    break
+                print(f"  Aguardando {PAUSA_RECONEXAO}s antes de reconectar...")
+                time.sleep(PAUSA_RECONEXAO)
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = conectar()
+                lote_num -= 1
+                continue
 
             if processados == 0:
                 print("Nenhum registro pendente. Processamento concluído.")
@@ -231,13 +297,13 @@ def main() -> None:
                 print(f"Limite de {args.lotes} lote(s) atingido.")
                 break
 
-    except RuntimeError as e:
-        print(f"\n[INTERROMPIDO] {e}")
-        sys.exit(1)
     except KeyboardInterrupt:
         print("\n[INTERROMPIDO] Ctrl+C recebido.")
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
     print(f"\n{SEP}")
     print(f"Total processados : {total_processados}")

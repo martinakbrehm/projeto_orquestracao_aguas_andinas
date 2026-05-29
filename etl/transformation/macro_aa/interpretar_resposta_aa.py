@@ -17,6 +17,7 @@ Mapeamento para tabela_macros_aa:
      0    |        —         |       —        |      3      | telefone_nao_validado  (usuarioRegistrado)
      0    |        —         |       —        |      4      | pendente               (falha conexão/API → retentar)
      0    |        —         |       —        |      5      | pendente               (outros / desconhecido)
+1    |   inválido (pres.)|     —          |      8      | telefone_nao_validado
 
 Chamado por:
   etl/load/aguas_andinas/04_processar_retorno_aa.py
@@ -71,7 +72,23 @@ def interpretar(
     tem_email = bool(email    and str(email).strip())
     sucesso_i = int(sucesso) if str(sucesso).strip().isdigit() else 0
 
+    # Normalização: 8 dígitos -> prepend '9'; 9 dígitos -> keep; outros -> inválido
+    def _normalize_candidate(s: str):
+        import re
+        ds = re.sub(r"\D", "", str(s or ""))
+        if len(ds) == 8:
+            return '9' + ds
+        if len(ds) == 9:
+            return ds
+        return None
+
     if sucesso_i == 1:
+        # Se a macro reportou telefone, valide formato segundo as regras
+        if tem_tel:
+            normalized = _normalize_candidate(telefone)
+            if not normalized:
+                    # keep resposta_id 8, but use status telefone_nao_validado to match 'no phone found'
+                    return (8, "telefone_nao_validado")
         if tem_tel and tem_email:
             return (1, "telefone_validado")    # Sucesso com telefone e e-mail
         if tem_tel:

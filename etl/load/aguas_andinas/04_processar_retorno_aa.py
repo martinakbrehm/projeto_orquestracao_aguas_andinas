@@ -195,6 +195,18 @@ def processar_csv(
 
                 resposta_id, novo_status = interpretar(sucesso, telefone, email, erro)
 
+                # normaliza telefone conforme regra: 8 dígitos -> prepend '9'; 9 dígitos -> keep; outros -> None
+                def _normalize_phone(s: str):
+                    import re
+                    ds = re.sub(r"\D", "", str(s or ""))
+                    if len(ds) == 8:
+                        return '9' + ds
+                    if len(ds) == 9:
+                        return ds
+                    return None
+
+                normalized_tel = _normalize_phone(telefone) if telefone else None
+
                 ok += 1
 
                 if dry_run:
@@ -202,8 +214,8 @@ def processar_csv(
                         print(f"  [{i}/{total}] dry-run ok={ok} skip={skip}")
                     continue
 
-                if telefone:
-                    tel_batch.append((cliente_id, telefone, "validado"))
+                if normalized_tel:
+                    tel_batch.append((cliente_id, normalized_tel, "validado"))
                 if email:
                     email_batch.append((cliente_id, email, "validado"))
                 # telefone_id / email_id = NULL nesta passagem

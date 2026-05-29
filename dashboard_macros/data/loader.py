@@ -6,9 +6,10 @@ import pymysql
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from config import db_cpfl  # noqa: E402
+from config import db_cpfl, db_aguas_andinas  # noqa: E402
 
 DB_CONFIG = db_cpfl()
+DB_CONFIG_AA = db_aguas_andinas()
 
 _CACHE: dict = {}        # cache por tipo {'macro': df} — sem TTL, vive durante o processo
 _CACHE_STATS: dict = {}  # cache para stats_por_arquivo / cobertura
@@ -39,14 +40,54 @@ SQLs = {
     """,
 }
 
+SQL_AA = """
+    SELECT
+        DATE(tm.data_update)  AS dia,
+        tm.status             AS status,
+        r.mensagem            AS mensagem,
+        COUNT(*)              AS qtd
+    FROM tabela_macros_aa tm
+    LEFT JOIN respostas r ON r.id = tm.resposta_id
+    WHERE tm.status NOT IN ('pendente', 'processando')
+    GROUP BY DATE(tm.data_update), tm.status, r.mensagem
+    ORDER BY dia DESC
+"""
+
+SQL_AA_STATUS_DIST = """
+    SELECT
+        tm.status  AS status,
+        COUNT(*)   AS qtd
+    FROM tabela_macros_aa tm
+    GROUP BY tm.status
+    ORDER BY qtd DESC
+"""
+
 
 
 def carregar_dados(tipo: str = "macro") -> pd.DataFrame:
     """Carrega dados do banco de dados.
 
-    tipo: 'macro'
+    tipo: 'macro' | 'aguas_andinas'
     Resultado é cacheado em memória por tipo (sem TTL — vive durante o processo).
     """
+    if tipo == "aguas_andinas":
+        if tipo in _CACHE:
+            return _CACHE[tipo].copy()
+        try:
+            conn = pymysql.connect(**DB_CONFIG_AA)
+            with conn.cursor() as cur:
+                cur.execute(SQL_AA)
+                cols = [d[0] for d in cur.description]
+                rows = cur.fetchall()
+            conn.close()
+            df = pd.DataFrame(rows, columns=cols)
+            if not df.empty:
+                _CACHE[tipo] = df
+            return df.copy()
+        except Exception as e:
+            print(f"[ERRO] Falha ao carregar dados (aguas_andinas): {e}")
+            return pd.DataFrame()
+
     tipo = tipo if tipo in SQLs else "macro"
     if tipo in _CACHE:
         return _CACHE[tipo].copy()
@@ -80,6 +121,27 @@ def invalidar_cache(tipo: str = None):
     else:
         _CACHE.clear()
         _CACHE_STATS.clear()
+
+
+def carregar_status_aa() -> pd.DataFrame:
+    """Carrega distribuição total de status de tabela_macros_aa (sem filtro de data)."""
+    cache_key = "aa_status_dist"
+    if cache_key in _CACHE:
+        return _CACHE[cache_key].copy()
+    try:
+        conn = pymysql.connect(**DB_CONFIG_AA)
+        with conn.cursor() as cur:
+            cur.execute(SQL_AA_STATUS_DIST)
+            cols = [d[0] for d in cur.description]
+            rows = cur.fetchall()
+        conn.close()
+        df = pd.DataFrame(rows, columns=cols)
+        if not df.empty:
+            _CACHE[cache_key] = df
+        return df.copy()
+    except Exception as e:
+        print(f"[ERRO] Falha ao carregar status AA: {e}")
+        return pd.DataFrame()
 
 
 def refresh_dashboard_macros_agg() -> bool:

@@ -33,6 +33,7 @@ USE `bd_Automacoes_time_dados_aguas_andinas`;
 --    5 | Aguardando processamento                    | telefone_nao_validado
 --    6 | Sucesso apenas com telefone                 | telefone_validado
 --    7 | Sucesso apenas com e-mail                   | telefone_nao_validado
+--    8 | Telefone inválido (normalização)            | telefone_nao_validado
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS respostas (
   id       TINYINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -48,7 +49,8 @@ INSERT INTO respostas (id, mensagem, status) VALUES
   (4, 'Falha de conexão / API',                   'telefone_nao_validado'),
   (5, 'Aguardando processamento',                 'telefone_nao_validado'),
   (6, 'Sucesso apenas com telefone',              'telefone_validado'),
-  (7, 'Sucesso apenas com e-mail',                'telefone_nao_validado')
+  (7, 'Sucesso apenas com e-mail',                'telefone_nao_validado'),
+  (8, 'Telefone invalido',                          'telefone_nao_validado')
 ON DUPLICATE KEY UPDATE mensagem = VALUES(mensagem), status = VALUES(status);
 
 

@@ -47,6 +47,7 @@ import pymysql
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from config import db_aguas_andinas  # noqa: E402
+from etl.load.aguas_andinas.limpeza_enderecos import normalizar_telefone  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Configuração
@@ -259,8 +260,12 @@ def processar_arquivo(
                 for cid in cids:
                     batch.append((cid, valor, staging_id))
             else:
-                # Telefones: armazena RUT, resolve em batch
-                batch.append((rut, valor, staging_id))
+                # Telefones: normaliza (8 dígitos -> adiciona '9'; inválidos -> descarta)
+                valor_norm = normalizar_telefone(valor)
+                if not valor_norm:
+                    ignorados += 1
+                    continue
+                batch.append((rut, valor_norm, staging_id))
 
             if len(batch) >= BATCH_SIZE:
                 if tipo == "telefone":

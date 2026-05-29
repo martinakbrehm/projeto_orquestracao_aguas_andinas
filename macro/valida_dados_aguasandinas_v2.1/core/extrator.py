@@ -39,10 +39,7 @@ class Extrator:
             except requests.exceptions.RequestException as e:
                 ultimo_erro = e
                 if tentativa < tentativas:
-                    if tentativa == 3:
-                        espera = 7200  # Espera de 2h antes da última tentativa
-                    else:
-                        espera = backoff_inicial * (2 ** (tentativa - 1))
+                    espera = backoff_inicial * (2 ** (tentativa - 1))
                     time.sleep(espera)
 
         raise RuntimeError(

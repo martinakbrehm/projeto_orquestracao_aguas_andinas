@@ -29,12 +29,21 @@ COLUMN_LABELS = {
     "pct_inativos": "% Inativos",
 }
 
+COLUMN_LABELS_AA = {
+    "dia":          "Data",
+    "total":        "Total",
+    "ativos":       "Com Telefone",
+    "pct_ativos":   "% Com Telefone",
+    "inativos":     "Sem Telefone",
+    "pct_inativos": "% Sem Telefone",
+}
+
 external_stylesheets = [
     "https://fonts.googleapis.com/css?family=Roboto:400,700&display=swap",
     "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css",
 ]
 app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
-app.title = "Dashboard CPFL - Aproveitamento das Macros"
+app.title = "Dashboard de Macros - Aguas Andinas & CPFL"
 
 # Autenticação básica para todo o app
 auth = dash_auth.BasicAuth(
@@ -109,168 +118,290 @@ app.layout = html.Div([
     html.Div([
         html.Img(src="https://img.icons8.com/color/48/000000/combo-chart--v2.png",
                  style={"height": "48px", "marginRight": "16px"}),
-        html.H1("Dashboard CPFL - Aproveitamento das Macros",
+        html.H1("Dashboard de Macros",
                 style={**TITLE_STYLE, "display": "inline-block", "verticalAlign": "middle", "margin": 0}),
     ], style={"display": "flex", "alignItems": "center", "marginBottom": "16px", "marginTop": "16px"}),
 
-    # Tipo fixo = macro (hidden store para compatibilidade)
-    dcc.Store(id="selector-tipo-macro", data="macro"),
+    # Auto-refresh a cada 20 minutos (compartilhado pelas abas)
+    dcc.Interval(id="interval-refresh", interval=REFRESH_INTERVAL_MS, n_intervals=0),
 
-    # Fornecedor fixo (hidden — sem seleção)
-    dcc.Store(id="selector-fornecedor", data="todos"),
+    # Abas
+    dcc.Tabs(id="abas-principais", value="cpfl", children=[
 
-    # Info bar
-    html.Div(id="info-registros", style={"marginBottom": "12px", "fontSize": "14px", "fontWeight": "600"}),
+        # ================================================================
+        # ABA CPFL
+        # ================================================================
+        dcc.Tab(label="CPFL", value="cpfl", children=[
 
-    # Filtros
-    html.Div([
-        html.Div([
-            html.Label("Filtrar m\u00eas", style={"fontWeight": "700", "fontSize": "13px",
-                                              "marginBottom": "6px", "display": "block", "color": "#1a237e"}),
-            dcc.Dropdown(
-                id="filtro-mes-dropdown",
-                options=[],
-                multi=True, clearable=True, placeholder="Todos os meses",
-                style={"width": "100%"},
-            ),
-        ], style={"flex": "0.7", "minWidth": "180px", "background": "#fff", "padding": "10px",
-                  "borderRadius": "8px", "boxShadow": "0 1px 6px rgba(44,62,80,0.06)"}),
+            # Tipo fixo = macro (hidden store para compatibilidade)
+            dcc.Store(id="selector-tipo-macro", data="macro"),
+            # Fornecedor fixo (hidden — sem seleção)
+            dcc.Store(id="selector-fornecedor", data="todos"),
 
-        html.Div([
-            html.Label("Filtrar dia", style={"fontWeight": "700", "fontSize": "13px",
-                                              "marginBottom": "6px", "display": "block", "color": "#1a237e"}),
-            dcc.Dropdown(
-                id="resumo-dia-dropdown",
-                options=[],
-                multi=True, clearable=True, placeholder="Todos os dias",
-                style={"width": "100%"},
-            ),
-        ], style={"flex": "0.7", "minWidth": "180px", "background": "#fff", "padding": "10px",
-                  "borderRadius": "8px", "boxShadow": "0 1px 6px rgba(44,62,80,0.06)"}),
+            # Info bar
+            html.Div(id="info-registros",
+                     style={"marginBottom": "12px", "fontSize": "14px", "fontWeight": "600",
+                            "marginTop": "12px"}),
 
-        # Stores ocultos (empresa/arquivo removidos da UI)
-        dcc.Store(id="filtro-empresa-dropdown", data=None),
-        dcc.Store(id="filtro-arquivo-dropdown", data=None),
-
-    ], style={"display": "flex", "gap": "12px", "alignItems": "stretch",
-              "marginBottom": "12px", "marginTop": "8px"}),
-
-    # Conteudo principal — 3 cards principais com loading conjunto
-    dcc.Loading(type="circle", children=html.Div([
-
-        # Card: Resumo diario
-        html.Div([
-            html.H2("Resumo por data de processamento",
-                    style={**SECTION_TITLE_STYLE, "marginBottom": "6px"}),
-            html.P(
-                "Total = consultas executadas no dia. "
-                "Ativo = PN encontrado no portal GMP. "
-                "Inativo = CPF/UC sem PN ou titular divergente.",
-                style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
-                       "background": "#e8f5e9", "padding": "8px 14px", "borderRadius": "6px",
-                       "borderLeft": "4px solid #2e7d32"},
-            ),
-            dash_table.DataTable(
-                id="tabela-resumo",
-                columns=[{"name": COLUMN_LABELS.get(c, c), "id": c}
-                          for c in ["dia", "total", "ativos", "pct_ativos", "inativos", "pct_inativos"]],
-                data=[],
-                style_table={"overflowX": "auto"},
-                style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "15px",
-                            "padding": "10px", "whiteSpace": "normal", "height": "auto"},
-                style_header={"backgroundColor": "#3949ab", "color": "white",
-                               "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
-                style_data_conditional=[
-                    {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4ff"},
-                    {"if": {"filter_query": '{dia} = "Total"'}, "fontWeight": "bold",
-                     "backgroundColor": "#e8eaf6"},
-                ],
-                page_size=20,
-            ),
-
-        ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
-                  "padding": "16px", "marginBottom": "18px"}),
-
-        # Card: Distribuicao de respostas + grafico
-        html.Div([
+            # Filtros
             html.Div([
-                html.H3("Distribuicao de respostas",
-                        style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
-                html.P(
-                    "Retorno do portal GMP da CPFL para cada consulta CPF+UC. "
-                    "Quantidade = total de combos com aquela resposta.",
-                    style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
-                           "background": "#fff3e0", "padding": "8px 14px", "borderRadius": "6px",
-                           "borderLeft": "4px solid #e65100"},
-                ),
-                dash_table.DataTable(
-                    id="tabela-mensagens",
-                    columns=[{"name": "Resposta", "id": "mensagem"},
-                              {"name": "Quantidade", "id": "quantidade"}],
-                    data=[],
-                    style_table={"overflowX": "auto", "borderRadius": "8px",
-                                 "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "12px"},
-                    style_cell={"textAlign": "left", "fontFamily": "Roboto", "fontSize": "14px",
-                                "padding": "8px", "whiteSpace": "normal", "height": "auto"},
-                    style_header={"backgroundColor": "#3949ab", "color": "white",
-                                   "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
-                    style_data_conditional=[
-                        {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4ff"},
-                    ],
-                    page_size=12,
-                ),
-            ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
-                      "padding": "12px", "marginBottom": "22px"}),
+                html.Div([
+                    html.Label("Filtrar mês", style={"fontWeight": "700", "fontSize": "13px",
+                                                      "marginBottom": "6px", "display": "block",
+                                                      "color": "#1a237e"}),
+                    dcc.Dropdown(
+                        id="filtro-mes-dropdown",
+                        options=[],
+                        multi=True, clearable=True, placeholder="Todos os meses",
+                        style={"width": "100%"},
+                    ),
+                ], style={"flex": "0.7", "minWidth": "180px", "background": "#fff", "padding": "10px",
+                          "borderRadius": "8px", "boxShadow": "0 1px 6px rgba(44,62,80,0.06)"}),
 
-        ], style={"width": "100%"}),
+                html.Div([
+                    html.Label("Filtrar dia", style={"fontWeight": "700", "fontSize": "13px",
+                                                      "marginBottom": "6px", "display": "block",
+                                                      "color": "#1a237e"}),
+                    dcc.Dropdown(
+                        id="resumo-dia-dropdown",
+                        options=[],
+                        multi=True, clearable=True, placeholder="Todos os dias",
+                        style={"width": "100%"},
+                    ),
+                ], style={"flex": "0.7", "minWidth": "180px", "background": "#fff", "padding": "10px",
+                          "borderRadius": "8px", "boxShadow": "0 1px 6px rgba(44,62,80,0.06)"}),
 
-        # Card: Resultados por arquivo carregado — Visao Geral
-        html.Div([
-            html.H3("Resultados por arquivo carregado",
-                    style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
-            html.P(
-                "Cada par CPF+UC = 1 combo. "
-                "Ineditas = combos novas inseridas a partir deste arquivo. "
-                "Processadas = combos que ja passaram pela macro. "
-                "Pendentes = combos aguardando execucao.",
-                style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
-                       "background": "#e3f2fd", "padding": "8px 14px", "borderRadius": "6px",
-                       "borderLeft": "4px solid #1565c0"},
-            ),
-            dash_table.DataTable(
-                id="tabela-arquivos-geral",
-                columns=[],
-                data=[],
-                style_table={"overflowX": "auto", "borderRadius": "8px",
-                             "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
-                style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "13px",
-                            "padding": "7px 5px", "whiteSpace": "normal", "height": "auto",
-                            "minWidth": "55px", "maxWidth": "120px"},
-                style_cell_conditional=[
-                    {"if": {"column_id": "arquivo"}, "textAlign": "left", "minWidth": "160px", "maxWidth": "220px"},
-                    {"if": {"column_id": "data_carga"}, "minWidth": "80px", "maxWidth": "90px"},
-                    {"if": {"column_id": "pct_combos_ativas"}, "minWidth": "50px", "maxWidth": "65px"},
-                    {"if": {"column_id": "pct_combos_inativas"}, "minWidth": "50px", "maxWidth": "65px"},
-                ],
-                style_header={"backgroundColor": "#3949ab", "color": "white",
-                               "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "11px",
-                               "padding": "8px 5px", "whiteSpace": "normal"},
-                style_data_conditional=[
-                    {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4ff"},
-                ],
-                page_size=10,
-            ),
-        ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
-                  "padding": "16px", "marginBottom": "18px"}),
+                dcc.Store(id="filtro-empresa-dropdown", data=None),
+                dcc.Store(id="filtro-arquivo-dropdown", data=None),
 
+            ], style={"display": "flex", "gap": "12px", "alignItems": "stretch",
+                      "marginBottom": "12px", "marginTop": "8px"}),
 
+            # Conteudo principal CPFL
+            dcc.Loading(type="circle", children=html.Div([
 
-    ], style={"background": "#e8eaf6", "padding": "28px", "borderRadius": "10px", "marginBottom": "18px"})),
+                # Card: Resumo diario
+                html.Div([
+                    html.H2("Resumo por data de processamento",
+                            style={**SECTION_TITLE_STYLE, "marginBottom": "6px"}),
+                    html.P(
+                        "Total = consultas executadas no dia. "
+                        "Ativo = PN encontrado no portal GMP. "
+                        "Inativo = CPF/UC sem PN ou titular divergente.",
+                        style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
+                               "background": "#e8f5e9", "padding": "8px 14px", "borderRadius": "6px",
+                               "borderLeft": "4px solid #2e7d32"},
+                    ),
+                    dash_table.DataTable(
+                        id="tabela-resumo",
+                        columns=[{"name": COLUMN_LABELS.get(c, c), "id": c}
+                                  for c in ["dia", "total", "ativos", "pct_ativos", "inativos", "pct_inativos"]],
+                        data=[],
+                        style_table={"overflowX": "auto"},
+                        style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "15px",
+                                    "padding": "10px", "whiteSpace": "normal", "height": "auto"},
+                        style_header={"backgroundColor": "#3949ab", "color": "white",
+                                       "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
+                        style_data_conditional=[
+                            {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4ff"},
+                            {"if": {"filter_query": '{dia} = "Total"'}, "fontWeight": "bold",
+                             "backgroundColor": "#e8eaf6"},
+                        ],
+                        page_size=20,
+                    ),
+                ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
+                          "padding": "16px", "marginBottom": "18px"}),
+
+                # Card: Distribuicao de respostas
+                html.Div([
+                    html.Div([
+                        html.H3("Distribuicao de respostas",
+                                style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
+                        html.P(
+                            "Retorno do portal GMP da CPFL para cada consulta CPF+UC. "
+                            "Quantidade = total de combos com aquela resposta.",
+                            style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
+                                   "background": "#fff3e0", "padding": "8px 14px", "borderRadius": "6px",
+                                   "borderLeft": "4px solid #e65100"},
+                        ),
+                        dash_table.DataTable(
+                            id="tabela-mensagens",
+                            columns=[{"name": "Resposta", "id": "mensagem"},
+                                      {"name": "Quantidade", "id": "quantidade"}],
+                            data=[],
+                            style_table={"overflowX": "auto", "borderRadius": "8px",
+                                         "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "12px"},
+                            style_cell={"textAlign": "left", "fontFamily": "Roboto", "fontSize": "14px",
+                                        "padding": "8px", "whiteSpace": "normal", "height": "auto"},
+                            style_header={"backgroundColor": "#3949ab", "color": "white",
+                                           "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
+                            style_data_conditional=[
+                                {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4ff"},
+                            ],
+                            page_size=12,
+                        ),
+                    ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
+                              "padding": "12px", "marginBottom": "22px"}),
+                ], style={"width": "100%"}),
+
+                # Card: Resultados por arquivo carregado
+                html.Div([
+                    html.H3("Resultados por arquivo carregado",
+                            style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
+                    html.P(
+                        "Cada par CPF+UC = 1 combo. "
+                        "Ineditas = combos novas inseridas a partir deste arquivo. "
+                        "Processadas = combos que ja passaram pela macro. "
+                        "Pendentes = combos aguardando execucao.",
+                        style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
+                               "background": "#e3f2fd", "padding": "8px 14px", "borderRadius": "6px",
+                               "borderLeft": "4px solid #1565c0"},
+                    ),
+                    dash_table.DataTable(
+                        id="tabela-arquivos-geral",
+                        columns=[],
+                        data=[],
+                        style_table={"overflowX": "auto", "borderRadius": "8px",
+                                     "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
+                        style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "13px",
+                                    "padding": "7px 5px", "whiteSpace": "normal", "height": "auto",
+                                    "minWidth": "55px", "maxWidth": "120px"},
+                        style_cell_conditional=[
+                            {"if": {"column_id": "arquivo"}, "textAlign": "left", "minWidth": "160px", "maxWidth": "220px"},
+                            {"if": {"column_id": "data_carga"}, "minWidth": "80px", "maxWidth": "90px"},
+                            {"if": {"column_id": "pct_combos_ativas"}, "minWidth": "50px", "maxWidth": "65px"},
+                            {"if": {"column_id": "pct_combos_inativas"}, "minWidth": "50px", "maxWidth": "65px"},
+                        ],
+                        style_header={"backgroundColor": "#3949ab", "color": "white",
+                                       "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "11px",
+                                       "padding": "8px 5px", "whiteSpace": "normal"},
+                        style_data_conditional=[
+                            {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4ff"},
+                        ],
+                        page_size=10,
+                    ),
+                ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
+                          "padding": "16px", "marginBottom": "18px"}),
+
+            ], style={"background": "#e8eaf6", "padding": "28px", "borderRadius": "10px",
+                      "marginBottom": "18px"})),
+
+        ]),  # fim Tab CPFL
+
+        # ================================================================
+        # ABA AGUAS ANDINAS
+        # ================================================================
+        dcc.Tab(label="Aguas Andinas", value="aguas_andinas", children=[
+
+            # Info bar
+            html.Div(id="info-registros-aa",
+                     style={"marginBottom": "12px", "fontSize": "14px", "fontWeight": "600",
+                            "marginTop": "12px"}),
+
+            # Filtros
+            html.Div([
+                html.Div([
+                    html.Label("Filtrar mês", style={"fontWeight": "700", "fontSize": "13px",
+                                                      "marginBottom": "6px", "display": "block",
+                                                      "color": "#1a237e"}),
+                    dcc.Dropdown(
+                        id="filtro-mes-dropdown-aa",
+                        options=[],
+                        multi=True, clearable=True, placeholder="Todos os meses",
+                        style={"width": "100%"},
+                    ),
+                ], style={"flex": "0.7", "minWidth": "180px", "background": "#fff", "padding": "10px",
+                          "borderRadius": "8px", "boxShadow": "0 1px 6px rgba(44,62,80,0.06)"}),
+
+                html.Div([
+                    html.Label("Filtrar dia", style={"fontWeight": "700", "fontSize": "13px",
+                                                      "marginBottom": "6px", "display": "block",
+                                                      "color": "#1a237e"}),
+                    dcc.Dropdown(
+                        id="resumo-dia-dropdown-aa",
+                        options=[],
+                        multi=True, clearable=True, placeholder="Todos os dias",
+                        style={"width": "100%"},
+                    ),
+                ], style={"flex": "0.7", "minWidth": "180px", "background": "#fff", "padding": "10px",
+                          "borderRadius": "8px", "boxShadow": "0 1px 6px rgba(44,62,80,0.06)"}),
+
+            ], style={"display": "flex", "gap": "12px", "alignItems": "stretch",
+                      "marginBottom": "12px", "marginTop": "8px"}),
+
+            # Conteudo principal Aguas Andinas
+            dcc.Loading(type="circle", children=html.Div([
+
+                # Card: Resumo diario AA
+                html.Div([
+                    html.H2("Resumo por data de processamento",
+                            style={**SECTION_TITLE_STYLE, "marginBottom": "6px"}),
+                    html.P(
+                        "Total = consultas executadas no dia. "
+                        "Com Telefone = RUT com telefone encontrado. "
+                        "Sem Telefone = RUT sem telefone no retorno.",
+                        style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
+                               "background": "#e8f5e9", "padding": "8px 14px", "borderRadius": "6px",
+                               "borderLeft": "4px solid #2e7d32"},
+                    ),
+                    dash_table.DataTable(
+                        id="tabela-resumo-aa",
+                        columns=[{"name": COLUMN_LABELS_AA.get(c, c), "id": c}
+                                  for c in ["dia", "total", "ativos", "pct_ativos", "inativos", "pct_inativos"]],
+                        data=[],
+                        style_table={"overflowX": "auto"},
+                        style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "15px",
+                                    "padding": "10px", "whiteSpace": "normal", "height": "auto"},
+                        style_header={"backgroundColor": "#1565c0", "color": "white",
+                                       "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
+                        style_data_conditional=[
+                            {"if": {"row_index": "odd"}, "backgroundColor": "#e3f2fd"},
+                            {"if": {"filter_query": '{dia} = "Total"'}, "fontWeight": "bold",
+                             "backgroundColor": "#bbdefb"},
+                        ],
+                        page_size=20,
+                    ),
+                ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
+                          "padding": "16px", "marginBottom": "18px"}),
+
+                # Card: Distribuicao de status AA
+                html.Div([
+                    html.H3("Distribuicao por status",
+                            style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
+                    html.P(
+                        "Contagem total de RUTs por status na fila. "
+                        "Inclui todos os estados: pendente, processando, com e sem telefone.",
+                        style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
+                               "background": "#fff3e0", "padding": "8px 14px", "borderRadius": "6px",
+                               "borderLeft": "4px solid #e65100"},
+                    ),
+                    dash_table.DataTable(
+                        id="tabela-status-aa",
+                        columns=[{"name": "Status", "id": "mensagem"},
+                                  {"name": "Quantidade", "id": "quantidade"}],
+                        data=[],
+                        style_table={"overflowX": "auto", "borderRadius": "8px",
+                                     "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "12px"},
+                        style_cell={"textAlign": "left", "fontFamily": "Roboto", "fontSize": "14px",
+                                    "padding": "8px", "whiteSpace": "normal", "height": "auto"},
+                        style_header={"backgroundColor": "#1565c0", "color": "white",
+                                       "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
+                        style_data_conditional=[
+                            {"if": {"row_index": "odd"}, "backgroundColor": "#e3f2fd"},
+                        ],
+                        page_size=10,
+                    ),
+                ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
+                          "padding": "12px", "marginBottom": "22px"}),
+
+            ], style={"background": "#dde9f8", "padding": "28px", "borderRadius": "10px",
+                      "marginBottom": "18px"})),
+
+        ]),  # fim Tab Aguas Andinas
+
+    ]),  # fim Tabs
 
     html.Div(style={"height": "8px"}),
-
-    # Auto-refresh a cada 20 minutos
-    dcc.Interval(id="interval-refresh", interval=REFRESH_INTERVAL_MS, n_intervals=0),
 
 ], style={"maxWidth": "1100px", "margin": "0 auto", "fontFamily": "Roboto",
           "background": "#f0f2f8", "padding": "16px 0"})
@@ -393,6 +524,92 @@ def atualizar_dashboard(filtro_mes, resumo_sel, tipo_macro, fornecedor):
 
     return (data_resumo, data_mensagens,
             data_arquivos, cols_geral)
+
+
+# --------------------------------------------------------------------------
+# Callbacks — Aguas Andinas
+# --------------------------------------------------------------------------
+
+@app.callback(
+    [
+        dash.dependencies.Output("filtro-mes-dropdown-aa", "options"),
+        dash.dependencies.Output("filtro-mes-dropdown-aa", "value"),
+        dash.dependencies.Output("resumo-dia-dropdown-aa", "options"),
+        dash.dependencies.Output("resumo-dia-dropdown-aa", "value"),
+        dash.dependencies.Output("info-registros-aa",      "children"),
+    ],
+    [
+        dash.dependencies.Input("interval-refresh", "n_intervals"),
+    ]
+)
+def atualizar_opcoes_filtros_aa(n_intervals):
+    df = loader.carregar_dados("aguas_andinas")
+    if df.empty:
+        loader.invalidar_cache("aguas_andinas")
+        df = loader.carregar_dados("aguas_andinas")
+    if df.empty:
+        return [], None, [], None, "Sem dados para Aguas Andinas (aguardando refresh...)"
+
+    opcoes_dia = sorted(df["dia"].dropna().unique())
+
+    meses_vistos = {}
+    for d in opcoes_dia:
+        ds = str(d)
+        if len(ds) >= 7:
+            chave_mes = ds[:7]
+            if chave_mes not in meses_vistos:
+                try:
+                    mes_num = int(chave_mes[5:7])
+                    ano = chave_mes[:4]
+                    meses_vistos[chave_mes] = f"{mes_num:02d}/{ano}"
+                except ValueError:
+                    pass
+    opcoes_dropdown_mes = [{"label": meses_vistos[k], "value": k} for k in sorted(meses_vistos.keys())]
+
+    total_processados = int(df["qtd"].sum()) if "qtd" in df.columns else len(df)
+    info = f"Processados: {total_processados:,}  |  Dias: {len(opcoes_dia)}"
+    return (
+        opcoes_dropdown_mes,
+        None,
+        [{"label": str(d), "value": str(d)} for d in opcoes_dia],
+        None,
+        info,
+    )
+
+
+@app.callback(
+    [
+        dash.dependencies.Output("tabela-resumo-aa", "data"),
+        dash.dependencies.Output("tabela-status-aa", "data"),
+    ],
+    [
+        dash.dependencies.Input("filtro-mes-dropdown-aa", "value"),
+        dash.dependencies.Input("resumo-dia-dropdown-aa", "value"),
+    ]
+)
+def atualizar_dashboard_aa(filtro_mes, resumo_sel):
+    filtro_datas_combinado = []
+    if filtro_mes:
+        for m in (filtro_mes if isinstance(filtro_mes, list) else [filtro_mes]):
+            filtro_datas_combinado.append(f"mes:{m}")
+    if resumo_sel:
+        for d in (resumo_sel if isinstance(resumo_sel, list) else [resumo_sel]):
+            filtro_datas_combinado.append(str(d))
+    try:
+        data_resumo, data_status, _ = orchestrator.build_dashboard_data(
+            filtro_datas_combinado if filtro_datas_combinado else None,
+            None,
+            tipo_macro="aguas_andinas",
+            granularidade="combo",
+        )
+    except Exception as _e:
+        import traceback
+        print(f"[ERRO atualizar_dashboard_aa] {_e}")
+        traceback.print_exc()
+        data_resumo = []
+        data_status = []
+
+    return data_resumo, data_status
 
 
 

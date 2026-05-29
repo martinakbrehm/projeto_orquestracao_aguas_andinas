@@ -13,6 +13,10 @@ STATUS_ATIVO   = {"ativo"}
 # Statuses que indicam cliente inativo
 STATUS_INATIVO = {"inativo"}
 
+# Aguas Andinas: "ativo" = telefone validado, "inativo" = sem telefone
+STATUS_ATIVO_AA   = {"telefone_validado"}
+STATUS_INATIVO_AA = {"telefone_nao_validado"}
+
 
 def build_dashboard_data(resumo_sel, filtro_empresa,
                          tipo_macro: str = "macro",
@@ -33,6 +37,14 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
         return [], [], build_tabela_arquivos(granularidade)
 
     dff = df.copy()
+
+    # Define masks de ativo/inativo conforme o tipo
+    if tipo_macro == "aguas_andinas":
+        s_ativo   = STATUS_ATIVO_AA
+        s_inativo = STATUS_INATIVO_AA
+    else:
+        s_ativo   = STATUS_ATIVO
+        s_inativo = STATUS_INATIVO
 
     # --- filtro de fornecedor ---
     if filtro_fornecedor and "fornecedor" in dff.columns:
@@ -82,11 +94,14 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
     # ---------------------------------------------------------------
     data_mensagens = []
     if "mensagem" in dff.columns:
-        mask_msg = (
-            dff["resposta_status"].notna() &
-            ~dff["resposta_status"].isin(["pendente"]) &
-            dff["mensagem"].notna()
-        )
+        if "resposta_status" in dff.columns:
+            mask_msg = (
+                dff["resposta_status"].notna() &
+                ~dff["resposta_status"].isin(["pendente"]) &
+                dff["mensagem"].notna()
+            )
+        else:
+            mask_msg = dff["mensagem"].notna()
         cnt = (
             dff.loc[mask_msg, ["mensagem", "qtd"]]
             .assign(mensagem=lambda df: df["mensagem"].astype(str).str.strip())
@@ -98,11 +113,21 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
         )
         data_mensagens = cnt.to_dict("records")
 
+    # Para Aguas Andinas: sobrescreve data_mensagens com distribuição total de status
+    if tipo_macro == "aguas_andinas":
+        df_status = loader.carregar_status_aa()
+        if not df_status.empty:
+            data_mensagens = (
+                df_status
+                .rename(columns={"status": "mensagem", "qtd": "quantidade"})
+                .to_dict("records")
+            )
+
     # ---------------------------------------------------------------
     # Masks de status
     # ---------------------------------------------------------------
-    mask_ativo   = dff["status"].isin(STATUS_ATIVO)
-    mask_inativo = dff["status"].isin(STATUS_INATIVO)
+    mask_ativo   = dff["status"].isin(s_ativo)
+    mask_inativo = dff["status"].isin(s_inativo)
 
     # ---------------------------------------------------------------
     # Tabela Resumo diário
