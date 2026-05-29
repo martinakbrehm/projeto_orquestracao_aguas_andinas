@@ -291,7 +291,7 @@ staging_import_rows → linhas brutas com status de validação
 | `pendente` | ainda não processado pela macro |
 | `processando` | em andamento |
 | `telefone_validado` | SUCESSO=1 com telefone retornado (com ou sem e-mail) |
-| `telefone_nao_validado` | SUCESSO=1 sem telefone, usuário já registrado, ou falha |
+| `telefone_nao_validado` | SUCESSO=1 sem telefone, usuário já registrado, falha ou telefone inválido |
 
 Mapeamento `respostas`:
 
@@ -304,6 +304,7 @@ Mapeamento `respostas`:
 | 5 | Aguardando processamento | `telefone_nao_validado` |
 | 6 | Sucesso apenas com telefone | `telefone_validado` |
 | 7 | Sucesso apenas com e-mail | `telefone_nao_validado` |
+| 8 | Telefone invalido | `telefone_nao_validado` |
 
 #### Controle de extração (`extraido` / `data_extracao`)
 
@@ -336,15 +337,41 @@ WHERE id IN (...)
 | `enriquecimento` | inserido pelo pipeline a partir da base histórica |
 | `validado` | confirmado pela macro (arquivo `_RESULTADO.csv`) |
 
+#### Normalização de Telefones
+
+Aplicada automaticamente no pipeline e na macro:
+
+| Dígitos | Ação |
+|---------|------|
+| 8 | Adiciona `9` na frente (ex: `12345678` → `912345678`) |
+| 9 | Mantém como está |
+| outros | Descartado (`resposta_id=8`, status `telefone_nao_validado`) |
+
+Função centralizada: `etl/load/aguas_andinas/limpeza_enderecos.py` → `normalizar_telefone()`
+
+#### Limpeza de Endereços
+
+Módulo centralizado: `etl/load/aguas_andinas/limpeza_enderecos.py`
+
+Aplica 5 etapas sobre `comuna` e `region`:
+1. Expansão de regiões truncadas (ex: `METROPOLIT` → `METROPOLITANA DE SANTIAGO`)
+2. Nulifica nomes de região no campo `comuna`
+3. Corrige truncamentos de prefixo (lista estática)
+4. Normaliza espaços múltiplos e pontuação
+5. Remove ponto final, letra extra no fim, corrige palavras coladas
+
 #### Execução do Pipeline AA
 
 ```powershell
 # 1. Importar base de clientes
-python etl/load/aguas_andinas/01_staging_import_aa.py
+python etl/load/aguas_andinas/01_importar_clientes_aa.py
 
-# 2. Processar staging → clientes + contatos
+# 2. Importar contatos (telefones + e-mails) — normalização automática de telefones
 python etl/load/aguas_andinas/02_importar_contatos_aa.py
 
-# 3. Processar retorno da macro (CSVs _RESULTADO.csv)
+# 3. Reimportar/atualizar endereços com limpeza completa
+python etl/load/aguas_andinas/03_reimportar_enderecos_aa.py
+
+# 4. Processar retorno da macro (CSVs _RESULTADO.csv)
 python etl/load/aguas_andinas/04_processar_retorno_aa.py
 ```
