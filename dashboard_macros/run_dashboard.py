@@ -21,5 +21,5 @@ from dashboard import app
 if __name__ == '__main__':
     print("Iniciando Dashboard CPFL...")
     print("Autenticacao: usuario 'cpfl', senha 'dashboard2026'")
-    print("URL: http://127.0.0.1:8050")
-    app.run(host='0.0.0.0', port=8050, debug=False, use_reloader=False)
+    print("URL: http://127.0.0.1:8052")
+    app.run(host='0.0.0.0', port=8052, debug=False, use_reloader=False)

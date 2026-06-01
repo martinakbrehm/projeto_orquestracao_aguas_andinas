@@ -26,8 +26,8 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 _MACRO_DIR   = Path(__file__).parent
 _PROJECT_DIR = _MACRO_DIR.parent.parent
-sys.path.insert(0, str(_MACRO_DIR))     # para core/
-sys.path.insert(0, str(_PROJECT_DIR))   # para config.py e etl/  (tem precedência)
+sys.path.insert(0, str(_PROJECT_DIR))   # para etl/
+sys.path.insert(0, str(_MACRO_DIR))     # para config.py local e core/ (tem precedência)
 
 import pymysql
 from config import db_aguas_andinas
@@ -147,9 +147,9 @@ def processar_lote(
     for i, (macro_id, cliente_id, rut, dv) in enumerate(lote, start=1):
         try:
             resultado = extrator.consultar_rut(str(rut), str(dv or ""))
-        except RuntimeError as e:
-            # Falha de conexão/API após todas as tentativas
-            print(f"  [ERRO FATAL] RUT {rut}: {e}")
+        except Exception as e:
+            # Falha de conexão/API ou erro inesperado após todas as tentativas
+            print(f"  [ERRO FATAL] RUT {rut}: {type(e).__name__}: {e}")
             erros_fatais += 1
             resultado = {"telefone": "", "email": "", "sucesso": 0, "erro": str(e)}
 

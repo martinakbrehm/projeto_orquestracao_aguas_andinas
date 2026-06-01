@@ -8,14 +8,114 @@ try:
 except ImportError:
     from data import loader
 
-# Statuses que indicam cliente ativo (titularidade confirmada)
-STATUS_ATIVO   = {"ativo"}
-# Statuses que indicam cliente inativo
-STATUS_INATIVO = {"inativo"}
-
-# Aguas Andinas: "ativo" = telefone validado, "inativo" = sem telefone
+# Águas Andinas: "ativo" = telefone validado, "inativo" = sem telefone
 STATUS_ATIVO_AA   = {"telefone_validado"}
 STATUS_INATIVO_AA = {"telefone_nao_validado"}
+
+
+def build_dashboard_data(resumo_sel, filtro_empresa,
+                         tipo_macro: str = "aguas_andinas",
+                         filtro_fornecedor: str = None,
+                         filtro_arquivo=None,
+                         granularidade: str = "combo"):
+    """Carrega dados do banco, aplica filtros e retorna (data_resumo, data_mensagens, [])."""
+    df = loader.carregar_dados(tipo_macro)
+
+    if df is None or df.empty:
+        return [], [], []
+
+    dff = df.copy()
+
+    # --- filtro de dias ---
+    if resumo_sel:
+        try:
+            dias_expandidos = []
+            for sel in (resumo_sel if isinstance(resumo_sel, list) else [resumo_sel]):
+                s = str(sel)
+                if s.startswith("mes:"):
+                    prefixo = s[4:]
+                    dias_do_mes = [str(d) for d in dff["dia"].dropna().unique() if str(d).startswith(prefixo)]
+                    dias_expandidos.extend(dias_do_mes)
+                else:
+                    dias_expandidos.append(s)
+            if dias_expandidos:
+                dff = dff[dff["dia"].astype(str).isin(dias_expandidos)]
+        except Exception:
+            pass
+
+    if dff.empty:
+        return [], [], []
+
+    # Distribuição de mensagens
+    data_mensagens = []
+    if "mensagem" in dff.columns:
+        mask_msg = dff["mensagem"].notna()
+        cnt = (
+            dff.loc[mask_msg, ["mensagem", "qtd"]]
+            .assign(mensagem=lambda d: d["mensagem"].astype(str).str.strip())
+            .groupby("mensagem")["qtd"]
+            .sum()
+            .reset_index()
+            .rename(columns={"qtd": "quantidade"})
+            .sort_values("quantidade", ascending=False)
+        )
+        data_mensagens = cnt.to_dict("records")
+
+    # Sobrescreve com distribuição total de status (todos os registros, sem filtro de data)
+    df_status = loader.carregar_status_aa()
+    if not df_status.empty:
+        data_mensagens = (
+            df_status
+            .rename(columns={"status": "mensagem", "qtd": "quantidade"})
+            .to_dict("records")
+        )
+
+    # Resumo diário
+    mask_ativo   = dff["status"].isin(STATUS_ATIVO_AA)
+    mask_inativo = dff["status"].isin(STATUS_INATIVO_AA)
+
+    data_resumo = []
+    if "dia" in dff.columns:
+        dia_str   = dff["dia"].astype(str)
+        total_s   = dff.groupby(dia_str)["qtd"].sum()
+        ativo_s   = dff[mask_ativo].groupby(dff[mask_ativo]["dia"].astype(str))["qtd"].sum()
+        inativo_s = dff[mask_inativo].groupby(dff[mask_inativo]["dia"].astype(str))["qtd"].sum()
+
+        resumo = pd.DataFrame({
+            "dia":      total_s.index,
+            "total":    total_s.values,
+            "ativos":   ativo_s.reindex(total_s.index, fill_value=0).values,
+            "inativos": inativo_s.reindex(total_s.index, fill_value=0).values,
+        }).sort_values("dia")
+
+        resumo["pct_ativos"]   = (resumo["ativos"]   / resumo["total"] * 100).round(1).astype(str) + "%"
+        resumo["pct_inativos"] = (resumo["inativos"] / resumo["total"] * 100).round(1).astype(str) + "%"
+
+        if len(resumo) > 1:
+            total_sum    = int(resumo["total"].sum())
+            ativos_sum   = int(resumo["ativos"].sum())
+            inativos_sum = int(resumo["inativos"].sum())
+            soma = {
+                "dia":          "Total",
+                "total":        total_sum,
+                "ativos":       ativos_sum,
+                "pct_ativos":   f"{round(ativos_sum / total_sum * 100, 1)}%" if total_sum else "0%",
+                "inativos":     inativos_sum,
+                "pct_inativos": f"{round(inativos_sum / total_sum * 100, 1)}%" if total_sum else "0%",
+            }
+            resumo = pd.concat([resumo, pd.DataFrame([soma])], ignore_index=True)
+
+        for col in ["total", "ativos", "inativos"]:
+            resumo[col] = resumo[col].astype(int)
+
+        data_resumo = resumo.to_dict("records")
+
+    return data_resumo, data_mensagens, []
+
+
+def build_tabela_arquivos(granularidade: str = "combo") -> list:
+    """Stub — não utilizado no projeto AA."""
+    return []
 
 
 def build_dashboard_data(resumo_sel, filtro_empresa,

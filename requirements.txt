@@ -1,0 +1,20 @@
+# =============================================================================
+# requirements.txt — Projeto Orquestração Águas Andinas
+# Cobre tanto a macro quanto o dashboard.
+# Python >= 3.10 obrigatório (usa union types: str | None, list[tuple])
+# =============================================================================
+
+# --- Banco de dados ---
+pymysql
+
+# --- Requisições HTTP (macro) ---
+requests
+beautifulsoup4
+charset_normalizer
+
+# --- Dashboard ---
+pandas>=1.5
+dash>=2.10
+plotly>=5.15
+flask>=2.0
+dash-auth
