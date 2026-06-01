@@ -14,43 +14,16 @@ _CACHE: dict = {}        # cache por tipo {'macro': df} — sem TTL, vive durant
 _CACHE_STATS: dict = {}  # cache para stats_por_arquivo / cobertura
 _CACHE_STATS_TTL = 3600  # segundos (1 hora)
 
-SQL_AA = """
-    SELECT
-        DATE(tm.data_update)  AS dia,
-        tm.status             AS status,
-        r.mensagem            AS mensagem,
-        COUNT(*)              AS qtd
-    FROM tabela_macros_aa tm
-    LEFT JOIN respostas r ON r.id = tm.resposta_id
-    WHERE tm.status NOT IN ('pendente', 'processando')
-    GROUP BY DATE(tm.data_update), tm.status, r.mensagem
-    ORDER BY dia DESC
-"""
+# Queries nas tabelas materializadas (populadas por sp_refresh_dashboard_agg)
+SQL_AA = "SELECT dia, status, mensagem, qtd FROM dashboard_macros_agg ORDER BY dia DESC"
 
-SQL_AA_STATUS_DIST = """
-    SELECT
-        tm.status  AS status,
-        COUNT(*)   AS qtd
-    FROM tabela_macros_aa tm
-    GROUP BY tm.status
-    ORDER BY qtd DESC
-"""
+SQL_AA_STATUS_DIST = "SELECT status, qtd FROM dashboard_status_agg ORDER BY qtd DESC"
 
 SQL_AA_STAGING = """
-    SELECT
-        si.filename                                                    AS arquivo,
-        DATE(si.created_at)                                            AS data_carga,
-        COUNT(DISTINCT c.id)                                           AS clientes_no_banco,
-        SUM(IF(tm.status NOT IN ('pendente','processando'), 1, 0))     AS processados,
-        SUM(IF(tm.status = 'pendente', 1, 0))                          AS pendentes,
-        SUM(IF(tm.status = 'telefone_validado', 1, 0))                 AS com_telefone,
-        SUM(IF(tm.status = 'telefone_nao_validado', 1, 0))             AS sem_telefone
-    FROM staging_imports si
-    JOIN clientes c ON c.staging_id = si.id
-    JOIN tabela_macros_aa tm ON tm.cliente_id = c.id
-    WHERE si.status = 'completed'
-    GROUP BY si.id, si.filename, si.created_at, si.rows_success
-    ORDER BY si.created_at DESC
+    SELECT arquivo, data_carga, clientes_no_banco, processados,
+           pendentes, com_telefone, sem_telefone
+    FROM dashboard_staging_agg
+    ORDER BY data_carga DESC
 """
 
 
@@ -137,16 +110,28 @@ def carregar_staging_aa() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _chamar_refresh_procedure() -> bool:
+    """Executa sp_refresh_dashboard_agg no banco e invalida o cache local."""
+    try:
+        conn = pymysql.connect(**DB_CONFIG_AA, autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute("CALL sp_refresh_dashboard_agg()")
+        conn.close()
+        invalidar_cache()
+        return True
+    except Exception as e:
+        print(f"[ERRO] Falha ao executar sp_refresh_dashboard_agg: {e}")
+        return False
+
+
 def refresh_dashboard_macros_agg() -> bool:
-    """Invalida o cache para forçar recarga na próxima leitura."""
-    invalidar_cache("aguas_andinas")
-    return True
+    """Reroda a procedure de refresh e invalida o cache."""
+    return _chamar_refresh_procedure()
 
 
 def refresh_dashboard_arquivos_agg() -> bool:
-    """Invalida o cache de staging para forçar recarga na próxima leitura."""
-    invalidar_cache("aa_staging")
-    return True
+    """Reroda a procedure de refresh e invalida o cache."""
+    return _chamar_refresh_procedure()
 
 
 def carregar_stats_por_arquivo() -> pd.DataFrame:

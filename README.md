@@ -34,7 +34,7 @@ Pipeline de orquestração end-to-end para automação da validação de contato
                        ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │                    CAMADA ANALÍTICA (Dashboard)                      │
-│  Dashboard Dash/Plotly → http://127.0.0.1:8050                       │
+│  Dashboard Dash/Plotly → http://127.0.0.1:8052                       │
 │  Refresh automático: 08h e 17h (thread interno)                      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -88,6 +88,25 @@ staging_import_rows
   id PK | staging_id FK | row_idx
   raw_rut | raw_nome | normalized_rut | normalized_dv
   validation_status ENUM | validation_message | processed_at
+```
+
+**Tabelas materializadas (dashboard):**
+
+```
+dashboard_macros_agg
+  dia | status | mensagem | qtd | atualizado_em
+  → agrega tabela_macros_aa + respostas por dia/status/mensagem
+
+dashboard_status_agg
+  status | qtd | atualizado_em
+  → distribuição total de status de tabela_macros_aa
+
+dashboard_staging_agg
+  arquivo | data_carga | clientes_no_banco | processados
+  pendentes | com_telefone | sem_telefone | atualizado_em
+  → stats por arquivo de staging_imports
+
+sp_refresh_dashboard_agg()  ← procedure que recarrega as 3 tabelas acima
 ```
 
 ### Tabelas
@@ -164,7 +183,7 @@ Catálogo dos cenários de retorno da macro:
 ### Acesso
 
 ```
-URL:    http://127.0.0.1:8050
+URL:    http://127.0.0.1:8052
 Usuário: aguasandinas
 Senha:   dashboard2026
 ```
@@ -337,7 +356,7 @@ projeto_orquestracao_aguas_andinas/
 └── dashboard_macros/
     ├── run_dashboard.py             # Entry point: inicia servidor na porta 8050
     ├── dashboard.py                 # App Dash: layout, callbacks, refresh automático
-    ├── data/loader.py               # SQL + cache em memória (TTL: refresh 2x/dia)
+    ├── data/loader.py               # Lê das agg tables; refresh chama sp_refresh_dashboard_agg()
     └── service/orchestrator.py      # Filtros e agregações para o resumo diário
 ```
 
@@ -351,8 +370,9 @@ projeto_orquestracao_aguas_andinas/
 | `staging_id` em `clientes` | Rastreia de qual importação cada cliente veio; permite queries corretas por staging |
 | 1 registro por cliente em `tabela_macros_aa` (UNIQUE em `cliente_id`) | Simplifica leitura e evita estados contraditórios; a macro sempre sobrescreve o resultado mais recente |
 | `extraido` / `data_extracao` fora do ciclo da macro | Desacopla o controle de consumo do processamento; permite reuso seguro dos dados |
+| Tabelas materializadas (`dashboard_*_agg`) + `sp_refresh_dashboard_agg()` | Queries analíticas pesadas (GROUP BY + JOIN em `tabela_macros_aa`) são pré-computadas na procedure; o dashboard faz apenas `SELECT` simples nas agg tables |
 | Cache em memória no dashboard | Isola a leitura analítica da carga transacional; latência de resposta <1ms após aquecimento |
-| Refresh às 08h e 17h via thread interna | Dados sempre atualizados nos principais turnos sem depender de agendador externo (Task Scheduler / cron) |
+| Refresh às 08h e 17h via thread interna | Dados sempre atualizados nos principais turnos sem depender de agendador externo (Task Scheduler / cron); cada refresh chama `CALL sp_refresh_dashboard_agg()` antes de recarregar o cache |
 | Normalização de telefones centralizada | Regra única aplicada tanto na importação quanto na macro; evita divergências |
 
 ---

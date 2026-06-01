@@ -330,6 +330,104 @@ END$$
 
 DELIMITER ;
 
+-- ---------------------------------------------------------------------------
+-- Tabelas materializadas — Dashboard analítico
+--
+-- Populadas pela procedure sp_refresh_dashboard_agg().
+-- O loader (dashboard_macros/data/loader.py) lê exclusivamente dessas
+-- tabelas; nenhuma query pesada é feita em tempo de request.
+--
+-- Refresh:
+--   • Automático: 08h e 17h via thread interna do dashboard
+--   • Manual:     CALL sp_refresh_dashboard_agg()
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS dashboard_macros_agg (
+  dia           DATE,
+  status        VARCHAR(50),
+  mensagem      TEXT,
+  qtd           INT,
+  atualizado_em DATETIME,
+  KEY idx_dma_dia    (dia),
+  KEY idx_dma_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  COMMENT='Agrega resultados por dia/status/mensagem (tabela materializada)';
+
+CREATE TABLE IF NOT EXISTS dashboard_status_agg (
+  status        VARCHAR(50),
+  qtd           INT,
+  atualizado_em DATETIME
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  COMMENT='Distribuição total de status (tabela materializada)';
+
+CREATE TABLE IF NOT EXISTS dashboard_staging_agg (
+  arquivo           VARCHAR(255),
+  data_carga        DATE,
+  clientes_no_banco INT,
+  processados       INT,
+  pendentes         INT,
+  com_telefone      INT,
+  sem_telefone      INT,
+  atualizado_em     DATETIME,
+  KEY idx_dsa_arquivo (arquivo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  COMMENT='Estatísticas por arquivo de staging (tabela materializada)';
+
+
+-- ---------------------------------------------------------------------------
+-- Procedure de refresh das tabelas materializadas
+-- ---------------------------------------------------------------------------
+DROP PROCEDURE IF EXISTS sp_refresh_dashboard_agg$$
+
+CREATE PROCEDURE sp_refresh_dashboard_agg()
+BEGIN
+  DECLARE v_now DATETIME DEFAULT NOW();
+
+  -- Agrega resultados por dia / status / mensagem de resposta
+  TRUNCATE TABLE dashboard_macros_agg;
+  INSERT INTO dashboard_macros_agg (dia, status, mensagem, qtd, atualizado_em)
+    SELECT
+      DATE(tm.data_update),
+      tm.status,
+      r.mensagem,
+      COUNT(*),
+      v_now
+    FROM tabela_macros_aa tm
+    LEFT JOIN respostas r ON r.id = tm.resposta_id
+    WHERE tm.status NOT IN ('pendente', 'processando')
+    GROUP BY DATE(tm.data_update), tm.status, r.mensagem
+    ORDER BY DATE(tm.data_update) DESC;
+
+  -- Distribuição total por status
+  TRUNCATE TABLE dashboard_status_agg;
+  INSERT INTO dashboard_status_agg (status, qtd, atualizado_em)
+    SELECT tm.status, COUNT(*), v_now
+    FROM tabela_macros_aa tm
+    GROUP BY tm.status
+    ORDER BY COUNT(*) DESC;
+
+  -- Estatísticas por arquivo de staging
+  TRUNCATE TABLE dashboard_staging_agg;
+  INSERT INTO dashboard_staging_agg
+    (arquivo, data_carga, clientes_no_banco, processados, pendentes, com_telefone, sem_telefone, atualizado_em)
+    SELECT
+      si.filename,
+      DATE(si.created_at),
+      COUNT(DISTINCT c.id),
+      SUM(IF(tm.status NOT IN ('pendente','processando'), 1, 0)),
+      SUM(IF(tm.status = 'pendente', 1, 0)),
+      SUM(IF(tm.status = 'telefone_validado', 1, 0)),
+      SUM(IF(tm.status = 'telefone_nao_validado', 1, 0)),
+      v_now
+    FROM staging_imports si
+    JOIN clientes c ON c.staging_id = si.id
+    JOIN tabela_macros_aa tm ON tm.cliente_id = c.id
+    WHERE si.status = 'completed'
+    GROUP BY si.id, si.filename, si.created_at, si.rows_success
+    ORDER BY si.created_at DESC;
+END$$
+
+DELIMITER ;
+
 -- =============================================================================
 -- FIM DO SCHEMA
 -- =============================================================================
